@@ -38,6 +38,6 @@ The Pages workflow is turned off in this fork: the website stays upstream's.
 
 ## Where it is installed
 
-- monarchy and anarchy: chezmoi group `quire` in [kurtlieber/dotfiles](https://github.com/kurtlieber/dotfiles) installs the pinned Linux release.
+- monarchy and anarchy: the chezmoi script `run_onchange_after_quire.sh` in [kurtlieber/dotfiles](https://github.com/kurtlieber/dotfiles) installs the pinned Linux release (app note `homelab/.agents/rules/apps/quire.md` there).
 - mbp: Kurt installs the macOS archive from this fork's releases by hand.
 - Android: later, signed with Kurt's own key.
