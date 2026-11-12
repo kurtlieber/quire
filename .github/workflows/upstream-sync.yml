@@ -1,0 +1,56 @@
+# Keeps this fork in step with bjarneo/quire, which takes no pull requests (FORK.md).
+# Once a day, when upstream's main has commits that this main lacks, it opens a pull request
+# from bjarneo:main into main and requests kurtlieber's review. The pull request follows
+# upstream's main as it moves, so at most one is open. The repository allows only merge
+# commits, so a merge keeps upstream's history and the next sync starts from it.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: "17 22 * * *" # 06:17 in Manila
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      UPSTREAM_HEAD: bjarneo:main
+      REVIEWER: kurtlieber
+    steps:
+      - name: Open a pull request when upstream has new commits
+        run: |
+          set -euo pipefail
+          ahead=$(gh api "repos/$REPO/compare/main...$UPSTREAM_HEAD" --jq .ahead_by)
+          if [ "$ahead" = 0 ]; then
+            echo "main has every upstream commit"
+            exit 0
+          fi
+          open=$(gh api "repos/$REPO/pulls?state=open&head=$UPSTREAM_HEAD" --jq length)
+          if [ "$open" != 0 ]; then
+            echo "an upstream pull request is already open; it follows upstream's main"
+            exit 0
+          fi
+          body=$(cat <<EOF
+          bjarneo/quire's main has $ahead commits that this fork's main lacks: https://github.com/$REPO/compare/main...$UPSTREAM_HEAD
+
+          Merge with **Create a merge commit**, the only method this repository allows. A squash would drop upstream's history, and the next sync would repeat these commits.
+
+          If GitHub reports a conflict with a change in this fork, see FORK.md, "When the pull request has a conflict".
+
+          After the merge, tag a fork release and bump the pin in kurtlieber/dotfiles (FORK.md, "Releases").
+          EOF
+          )
+          number=$(gh api "repos/$REPO/pulls" -f title="Merge upstream bjarneo/quire main" \
+            -f head="$UPSTREAM_HEAD" -f base=main -f body="$body" --jq .number)
+          gh api "repos/$REPO/pulls/$number/requested_reviewers" -f "reviewers[]=$REVIEWER" --silent
+          echo "opened pull request #$number"
