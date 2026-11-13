@@ -14,9 +14,9 @@ use rune::Tx;
 use crate::app::App;
 use crate::sync::app::Job;
 
-const API: &str = "https://api.github.com/repos/bjarneo/quire/releases/latest";
-const DOWNLOADS: &str = "https://github.com/bjarneo/quire/releases/download/";
-pub const PAGE: &str = "https://github.com/bjarneo/quire/releases/latest";
+const API: &str = "https://api.github.com/repos/kurtlieber/quire/releases/latest";
+const DOWNLOADS: &str = "https://github.com/kurtlieber/quire/releases/download/";
+pub const PAGE: &str = "https://github.com/kurtlieber/quire/releases/latest";
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// The time from one automatic check to the next, in seconds.
 const EVERY: f64 = 6.0 * 3600.0;
@@ -351,7 +351,7 @@ mod tests {
     use super::*;
 
     const JSON: &str = r#"{"tag_name":"v0.6.0","draft":false,"assets":[
-        {"name":"quire-0.6.0-linux-x86_64.tar.gz","browser_download_url":"https://github.com/bjarneo/quire/releases/download/v0.6.0/quire-0.6.0-linux-x86_64.tar.gz"},
+        {"name":"quire-0.6.0-linux-x86_64.tar.gz","browser_download_url":"https://github.com/kurtlieber/quire/releases/download/v0.6.0/quire-0.6.0-linux-x86_64.tar.gz"},
         {"name":"quire-0.6.0-macos-arm64.zip","browser_download_url":"https://example.com/quire-0.6.0-macos-arm64.zip"}]}"#;
 
     #[test]
