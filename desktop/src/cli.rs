@@ -38,8 +38,12 @@ pub fn run_subcommand() -> bool {
             }
             true
         }
+        Some("--version" | "-V") => {
+            println!("quire {}", crate::update::CURRENT);
+            true
+        }
         Some("--help" | "-h") => {
-            println!("Quire, a plain editor for folders of Markdown files.\n\nUsage:\n  quire [folder]               Open the app, optionally on a folder\n  quire mcp --folder <path>    Serve a folder to AI apps over MCP (stdio)");
+            println!("Quire, a plain editor for folders of Markdown files.\n\nUsage:\n  quire [folder]               Open the app, optionally on a folder\n  quire mcp --folder <path>    Serve a folder to AI apps over MCP (stdio)\n  quire --version              Print the version");
             true
         }
         _ => false,

@@ -11,8 +11,8 @@ android {
         applicationId = "app.quire.notes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.5.1"
+        versionCode = 9
+        versionName = "0.5.4"
     }
 
     // Release signing reads its key from Gradle properties, for example in
@@ -43,6 +43,8 @@ android {
 
     buildFeatures {
         compose = true
+        // The update check reads VERSION_NAME and DEBUG.
+        buildConfig = true
     }
 
     packaging {

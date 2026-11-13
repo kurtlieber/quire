@@ -4,7 +4,7 @@
 //! with transparent text lies over them and takes the typing. Both lay out the same text in the
 //! same font at the same width, so the caret and selection land on the drawn glyphs.
 
-use rune::{Color, El, Key, KeyEvent, ScrollSpec, Span, TextEdit, TextStyle, Tx, col, el, icon, rich, row, text, text_input};
+use rune::{Color, El, Key, KeyEvent, ScrollFade, ScrollSpec, Span, TextEdit, TextStyle, Tx, col, el, icon, rich, row, text, text_input};
 
 use super::widgets::label;
 use super::{V, outline, preview, sidebar};
@@ -42,11 +42,7 @@ pub fn body(v: V) -> El {
     if top + side > 0.0 {
         sheet = sheet.border_sides([top, 0.0, 0.0, side], p.line).border_layout();
     }
-    let mut area = col().key("doc-area").grow(1.0).min_w(0.0).min_h(0.0).h_full();
-    let locked = v.s.active.as_deref().is_some_and(|a| v.s.note_locked(a));
-    if v.has_doc() && !focus && v.s.mode == Mode::Source && v.s.settings().toolbar && !locked {
-        area = area.child(toolbar(v));
-    }
+    let area = col().key("doc-area").grow(1.0).min_w(0.0).min_h(0.0).h_full();
     let mut inner = row().key("sheet-row").grow(1.0).min_h(0.0).w_full().child(area.child(doc_scroll(v)));
     if v.right_visible() {
         inner = inner.child(outline::outline(v));
@@ -83,10 +79,10 @@ fn doc_scroll(v: V) -> El {
     if v.has_doc() {
         let size = s.settings().size as f32;
         let pad_x = if focus { clamp(20.0, v.vw * 0.06, 64.0) } else { clamp(20.0, v.vw * 0.05, 56.0) };
-        // Under the toolbar, the breadcrumb sits as far below its line as it sits below the
-        // title bar without it.
-        let toolbar = s.mode == Mode::Source && s.settings().toolbar;
-        let (pad_t, pad_b) = if focus { (v.vh * 0.16, v.vh * 0.48) } else { (if toolbar { 24.0 } else { 34.0 }, v.vh * 0.38) };
+        // The toolbar floats TOOLBAR_TOP below the title bar, and the breadcrumb starts 64
+        // points down, as far as it did under the old full-width bar.
+        let bar = shows_toolbar(v);
+        let (pad_t, pad_b) = if focus { (v.vh * 0.16, v.vh * 0.48) } else { (if bar { TOOLBAR_TOP } else { 34.0 }, v.vh * 0.38) };
         let ch = if focus { 68.0 } else { 72.0 };
         let mut column = col()
             .key("doc-col")
@@ -105,6 +101,9 @@ fn doc_scroll(v: V) -> El {
             });
         if s.settings().width == "readable" {
             column = column.max_w(size * 0.6 * ch + 2.0 * pad_x);
+        }
+        if bar {
+            column = column.child(toolbar(v));
         }
         if !focus {
             column = column.child(crumb(v));
@@ -125,7 +124,26 @@ fn doc_scroll(v: V) -> El {
     }
     // A scroll viewport is a column: in a row its content would stretch to the viewport's
     // height and leave nothing to scroll.
-    col().key("doc-scroll").grow(1.0).min_w(0.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false }).child(content)
+    let mut scroll = col().key("doc-scroll").grow(1.0).min_w(0.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false });
+    if shows_toolbar(v) {
+        // Text fades out at the top, so the toolbar floats on a clear band. The caret stays
+        // below the toolbar while you type.
+        scroll = scroll.scroll_fade(ScrollFade::strength(TOOLBAR_TOP + TOOLBAR_H + 8.0).with_end(ScrollFade::strength(0.0))).scroll_margin(TOOLBAR_TOP + TOOLBAR_H + 12.0);
+    }
+    scroll.child(content)
+}
+
+/// The space above the floating toolbar, at rest and while it sticks.
+const TOOLBAR_TOP: f32 = 10.0;
+/// The height of the floating toolbar.
+const TOOLBAR_H: f32 = 36.0;
+
+/// Whether the formatting toolbar shows: source mode, the setting on, a note open and not
+/// locked, and not in focus mode.
+fn shows_toolbar(v: V) -> bool {
+    let s = v.s;
+    let locked = s.active.as_deref().is_some_and(|a| s.note_locked(a));
+    v.has_doc() && !v.focus() && s.mode == Mode::Source && s.settings().toolbar && !locked
 }
 
 /// The toolbar's lock: a plain note gets a password, and an unlocked note locks again. The
@@ -149,26 +167,71 @@ fn lock_button(v: V) -> El {
         .child(icon(&LOCK, 16.0).color(if open { p.acc } else { p.mute }).group_color(if open { p.acc } else { p.ink }))
 }
 
-/// The formatting toolbar: a row over the note, lined up with its text column. The ink of the
-/// first icon sits on the text's left edge: its button reaches 6 points past the icon, and the
-/// B starts 3.5 points into its box.
+/// The toolbar's pin: it pins the note to the top of the tree, or unpins it. The accent marks a
+/// pinned note.
+fn pin_button(v: V) -> El {
+    use super::widgets::PIN;
+    let p = v.p;
+    let on = v.s.active.as_deref().is_some_and(|a| v.s.is_pinned(a));
+    let help = if on { "Unpin" } else { "Pin to the top of the tree" };
+    row()
+        .key("fmt-pin")
+        .size(28.0, 28.0)
+        .center()
+        .radius(6.0)
+        .hover(p.hover)
+        .hover_group()
+        .role("button")
+        .label(help)
+        .help(help)
+        .on_press(|s: &mut App| {
+            if let Some(a) = s.active.clone() {
+                s.toggle_pin(&a);
+            }
+        })
+        .child(icon(&PIN, 16.0).color(if on { p.acc } else { p.mute }).group_color(if on { p.acc } else { p.ink }))
+}
+
+/// The formatting toolbar: a pill at the top of the note column. It scrolls with the note
+/// until it reaches TOOLBAR_TOP below the title bar, then stays there, and the note scrolls
+/// under it.
 fn toolbar(v: V) -> El {
     use super::widgets::{BOLD, BULLETS, CODE, HEADING, IMAGE, ITALIC, LINK, NUMBERS, QUOTE, STRIKE, TASK, WIKI, icon_button};
     use crate::format::Fmt;
     let p = v.p;
-    let s = v.s;
     let k = crate::keys::k;
     let btn = |key: &str, glyph: &'static rune::Icon, help: String, f: Fmt| icon_button(p, key, glyph, 16.0, &help).on_press_tx(move |s: &mut App, tx| s.format(f, tx));
-    let sep = |key: &str| el().key(key).w(1.0).h(16.0).mx(6.0).fill(p.line);
-    let pad_x = clamp(20.0, v.vw * 0.05, 56.0);
-    let mut r = row()
-        .key("toolbar-row")
-        .w_full()
-        .h(40.0)
-        .px(pad_x)
-        .center_y()
+    let sep = |key: &str| el().key(key).w(1.0).h(16.0).mx(5.0).fill(p.line);
+    // No border. At rest the toolbar has no background, as the text around it. The background
+    // and its shadow come in while the note scrolls under the toolbar.
+    let shadow = if p.dark { 0.5 } else { 0.12 };
+    let back = el()
+        .key("toolbar-back")
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .radius(10.0)
+        .fill(p.bg.alpha(0.88))
+        .backdrop_blur(12.0)
+        .box_shadow(rune::Shadow { x: 0.0, y: 6.0, blur: 22.0, spread: -4.0, color: Color::BLACK.alpha(shadow), inset: false })
+        .stuck_reveal(8.0);
+    row()
+        .key("toolbar")
+        .self_start()
+        .h(TOOLBAR_H)
+        .mb(64.0 - TOOLBAR_TOP - TOOLBAR_H)
+        // The ink of the first icon lines up with the text: 4 points of padding, then the 9.5
+        // points from a button's edge to its glyph.
+        .ml(-13.5)
+        .px(4.0)
         .gap(2.0)
-        .child(btn("fmt-bold", &BOLD, format!("Bold ({})", k(&["Mod", "B"])), Fmt::Bold).ml(-9.5))
+        .center_y()
+        .sticky_top(TOOLBAR_TOP)
+        // A press between the buttons stays on the toolbar. The column under it would move
+        // the caret to the end of the note.
+        .on_press(|_: &mut App| {})
+        .role("toolbar")
+        .label("Formatting")
+        .child(back)
+        .child(btn("fmt-bold", &BOLD, format!("Bold ({})", k(&["Mod", "B"])), Fmt::Bold))
         .child(btn("fmt-italic", &ITALIC, format!("Italic ({})", k(&["Mod", "I"])), Fmt::Italic))
         .child(btn("fmt-strike", &STRIKE, "Strikethrough".into(), Fmt::Strike))
         .child(btn("fmt-heading", &HEADING, "Heading".into(), Fmt::Heading))
@@ -184,11 +247,8 @@ fn toolbar(v: V) -> El {
         .child(sep("sep-3"))
         .child(icon_button(p, "fmt-image", &IMAGE, 16.0, &format!("Insert an image ({})", k(&["Mod", "Shift", "I"]))).on_press_tx(|s: &mut App, tx| s.pick_image(tx)))
         .child(sep("sep-4"))
-        .child(lock_button(v));
-    if s.settings().width == "readable" {
-        r = r.max_w(s.settings().size as f32 * 0.6 * 72.0 + 2.0 * pad_x);
-    }
-    col().key("toolbar").w_full().items_center().border_sides([0.0, 0.0, 1.0, 0.0], p.line).border_layout().child(r)
+        .child(pin_button(v))
+        .child(lock_button(v))
 }
 
 fn crumb(v: V) -> El {

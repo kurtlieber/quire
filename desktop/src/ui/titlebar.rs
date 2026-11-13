@@ -36,6 +36,9 @@ fn bar(v: V) -> El {
     tabs = tabs.child(icon_button(p, "new-tab", &PLUS, 12.0, "New note").mb(4.75).ml(2.0).on_press_tx(|s: &mut App, tx| s.new_note(None, tx)));
 
     let mut right = row().key("right-zone").h(42.0).pt(6.5).pl(6.0).pr(10.0).gap(6.0).center_y();
+    if let Some(rel) = &s.update.available {
+        right = right.child(update_button(v, &rel.version));
+    }
     if v.has_doc() {
         // One button flips between source and preview. Its icon shows where it goes.
         let (glyph, help) = if s.mode == Mode::Source {
@@ -59,6 +62,29 @@ fn bar(v: V) -> El {
         .child(tabs)
         .child(right)
         .child(el().w(v.trailing))
+}
+
+/// The Update button: a newer release is out. A press installs it and restarts Quire.
+fn update_button(v: V, version: &str) -> El {
+    let p = v.p;
+    let busy = v.s.update.applying();
+    let help = format!("Quire {version} is out. Select to update.");
+    let mut b = row()
+        .key("update")
+        .h(24.0)
+        .px(10.0)
+        .mr(4.0)
+        .center_y()
+        .radius(12.0)
+        .fill(p.button)
+        .role("button")
+        .label(help.clone())
+        .help(help)
+        .child(label(if busy { "Updating…" } else { "Update" }, sans(12.5, 500.0), p.on_acc));
+    if !busy {
+        b = b.hover(p.button_hover).on_press_tx(|s: &mut App, tx| s.start_update(tx));
+    }
+    b
 }
 
 fn tab(v: V, path: &str) -> El {

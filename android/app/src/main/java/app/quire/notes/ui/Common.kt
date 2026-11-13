@@ -73,6 +73,8 @@ object QIcons {
     const val LIST = "M6 4h8M6 8h8M6 12h8M2.6 4h.01M2.6 8h.01M2.6 12h.01"
     const val TASK = "M3.5 2.5h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM5.3 8.2l1.9 1.9 3.6-4"
     const val QUOTE = "M3 4v8M6.5 5h7M6.5 8h7M6.5 11h4.5"
+    /** A pin, for the Pinned group and the pin button. The path of the desktop app. */
+    const val PIN = "M5.5 2.5h5M6.5 2.5v3.9L4.5 9h7l-2-2.6V2.5M8 9v4.5"
     /** A padlock, for locked notes. */
     const val LOCK = "M5 7h6a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H5a1.6 1.6 0 0 1-1.6-1.6V8.6A1.6 1.6 0 0 1 5 7zM5.4 7V5.2a2.6 2.6 0 0 1 5.2 0V7"
     /** Insert image: a frame with a hill and a sun. */

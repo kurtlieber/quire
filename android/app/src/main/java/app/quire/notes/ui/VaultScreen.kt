@@ -67,6 +67,7 @@ import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.mimeTypes
 import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -222,6 +223,7 @@ private fun TopBar(vm: QuireViewModel) {
         Box(Modifier.weight(1f).padding(start = 4.dp)) {
             if (active != null) Crumb(vm, active) else Mono(vm.vault?.name ?: "", 12.sp, c.mute, maxLines = 1)
         }
+        if (vm.showUpdate()) UpdatePill(vm, Modifier.padding(end = 4.dp))
         IconBtn(QIcons.SEARCH, stroke = 1.5f, iconSize = 15.dp) { vm.openPalette("files") }
         if (active != null) {
             // One button flips between source and preview. Its icon shows where it goes.
@@ -610,7 +612,8 @@ private fun MarkdownBar(vm: QuireViewModel) {
         vm.toolbar.forEach { a ->
             val label = toolLabel(a)
             // The Lock button shows as active while the note is unlocked. A tap locks it again.
-            val on = a == "lock" && unlocked
+            // The Pin button shows as active while the note is pinned.
+            val on = (a == "lock" && unlocked) || (a == "pin" && vm.active?.let { vm.isPinned(it) } == true)
             Box(
                 Modifier
                     .size(42.dp, 38.dp)
@@ -636,6 +639,7 @@ private fun toolLabel(a: String) = when (a) {
     "quote" -> "Quote"
     "code" -> "Code"
     "lock" -> "Lock"
+    "pin" -> "Pin"
     else -> "Image"
 }
 
@@ -655,6 +659,31 @@ private fun ToolGlyph(a: String, c: QColors, on: Boolean = false) {
         "quote" -> QIcon(QIcons.QUOTE, 16f, 16.dp, 1.3f, ink)
         "code" -> QIcon(QIcons.CODE, 16f, 16.dp, 1.3f, ink)
         "lock" -> QIcon(QIcons.LOCK, 16f, 16.dp, 1.3f, lockColor(c, on))
+        "pin" -> QIcon(QIcons.PIN, 16f, 16.dp, 1.25f, lockColor(c, on))
         else -> QIcon(QIcons.IMAGE, 16f, 16.dp, 1.25f, ink)
     }
 }
+
+/**
+ * The Update button: a small pill in the accent. A press downloads the newer release and opens
+ * the installer. During the download it shows "Updating…" and takes no press.
+ */
+@Composable
+internal fun UpdatePill(vm: QuireViewModel, modifier: Modifier = Modifier) {
+    val c = LocalQ.current
+    val v = vm.update?.version ?: return
+    val help = "Quire $v is out. Select to update."
+    Box(
+        modifier
+            .height(24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.button)
+            .tap(RoundedCornerShape(12.dp), pressed = c.buttonPressed, enabled = !vm.updating) { vm.startUpdate() }
+            .semantics { contentDescription = help }
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Txt(if (vm.updating) "Updating…" else "Update", 12.5.sp, c.onAcc, weight = FontWeight.W500, maxLines = 1)
+    }
+}
+

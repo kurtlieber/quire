@@ -402,6 +402,22 @@ private fun FilesSection(vm: QuireViewModel) {
         Toggle(s.updateLinks) { vm.updateSettings { it.copy(updateLinks = !it.updateLinks) } }
     }
     SetRow("Sample notes", "Put Field Notes back the way it started.") { OutlineButton("Restore") { vm.resetSample() } }
+    // A debug build cannot install a release, so it has no update row.
+    if (vm.updatesAllowed) {
+        SetRow("Check for updates", "Quire looks for a newer release on GitHub.") {
+            Toggle(s.checkUpdates) { vm.setCheckUpdates(!s.checkUpdates) }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Txt("Version ${vm.appVersion}", 12.5.sp, c.mute, Modifier.weight(1f), maxLines = 1)
+            if (vm.update != null) UpdatePill(vm)
+            OutlineButton(if (vm.checking) "Checking…" else "Check now") { vm.checkNow() }
+        }
+        vm.updateNote?.let { Txt(it, 12.5.sp, c.ink2, Modifier.padding(bottom = 16.dp)) }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)

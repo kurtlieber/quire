@@ -4,6 +4,9 @@
     <!-- Sync talks to the object store that the person picks in the settings. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- The Update button gives a downloaded release to the system installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- A self-hosted S3 server on the local network can use plain http, as on the desktop. -->
     <application
         android:usesCleartextTraffic="true"
@@ -25,6 +28,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Gives the installer read access to the downloaded APK in the cache folder. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
     </application>
 
 </manifest>

@@ -46,6 +46,12 @@ pub fn commands(s: &App, dark: bool) -> Vec<Cmd> {
     }
     if has {
         v.push(cmd("Rename note", &[], |s, tx| s.start_rename(tx)));
+        let label = if s.active.as_deref().is_some_and(|a| s.is_pinned(a)) { "Unpin note" } else { "Pin note" };
+        v.push(cmd(label, &[], |s, _| {
+            if let Some(a) = s.active.clone() {
+                s.toggle_pin(&a);
+            }
+        }));
         v.push(cmd("Delete note", &[], |s, _| s.delete_note()));
         v.push(cmd("Close tab", &[], |s, _| {
             if let Some(a) = s.active.clone() {

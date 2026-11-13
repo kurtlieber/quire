@@ -17,6 +17,8 @@ pub struct DragNote {
     pub active: bool,
     /// The folder under the pointer (`""` is the root), if the note can go there.
     pub target: Option<String>,
+    /// The pointer is over the Pinned group, and the note is not pinned yet.
+    pub pin: bool,
 }
 
 /// What the tree's menu was opened on.
@@ -208,7 +210,7 @@ impl App {
             let t = self.files().get(&p).cloned().unwrap_or_default();
             self.set_text(&p, t);
         }
-        for t in self.tabs.iter_mut().chain(self.recent.iter_mut()) {
+        for t in self.tabs.iter_mut().chain(self.recent.iter_mut()).chain(self.pinned.iter_mut()) {
             if t == from {
                 *t = to.clone();
             }
@@ -234,7 +236,7 @@ impl App {
         }
         match d.phase {
             Phase::Down => {
-                self.dragging = Some(DragNote { path: path.to_string(), x: d.window_point()[0], y: d.window_point()[1], active: false, target: None });
+                self.dragging = Some(DragNote { path: path.to_string(), x: d.window_point()[0], y: d.window_point()[1], active: false, target: None, pin: false });
             }
             Phase::Move => {
                 let Some(dn) = &mut self.dragging else { return };
@@ -246,8 +248,11 @@ impl App {
                 if dn.active {
                     let (x, y) = (dn.x, dn.y);
                     tx.element_at(x, y, |s: &mut App, picked, _| {
-                        let target = picked.and_then(|p| folder_at(p.path()));
+                        let pin = picked.as_ref().is_some_and(|p| crate::pins::in_group(p.path()));
+                        let target = if pin { None } else { picked.and_then(|p| folder_at(p.path())) };
+                        let pinned = s.dragging.as_ref().is_some_and(|dn| s.is_pinned(&dn.path));
                         if let Some(dn) = &mut s.dragging {
+                            dn.pin = pin && !pinned;
                             dn.target = target.filter(|f| *f != md::dir(&dn.path));
                         }
                     });
@@ -256,7 +261,9 @@ impl App {
             Phase::Up => {
                 if let Some(dn) = self.dragging.take() {
                     if dn.active {
-                        if let Some(t) = dn.target {
+                        if dn.pin {
+                            self.pin(&dn.path);
+                        } else if let Some(t) = dn.target {
                             self.move_note(&dn.path, &t, tx);
                         }
                     }
@@ -316,6 +323,7 @@ impl App {
             self.edits.remove(p);
         }
         self.recent.retain(|p| !inside(p));
+        self.pinned.retain(|p| !inside(p));
         self.unlocked.retain(|p, _| !inside(p));
         self.expanded.retain(|p| !inside(p));
         if self.new_folder.as_ref().is_some_and(|nf| inside(&nf.parent)) {

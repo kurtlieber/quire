@@ -447,6 +447,29 @@ fn files(v: V) -> El {
             }),
         ))
         .child(row_(v, "sample", "Sample notes", Some("Put Field Notes back the way it started."), outline_button(p, "restore", "Restore", 30.0, |s, tx| s.reset_sample(tx))))
+        .child(updates(v))
+}
+
+/// The update check: the version, "Check now" and the switch.
+fn updates(v: V) -> El {
+    let p = v.p;
+    let s = v.s;
+    let on = s.settings().check_updates;
+    let mut desc = format!("This is version {}. Quire asks GitHub for a new release when it starts and every 6 hours, and shows Update at the top right.", crate::update::CURRENT);
+    if let Some(m) = &s.update.message {
+        desc = format!("{desc} {m}");
+    }
+    let now = if s.update.checking() { "Checking…" } else { "Check now" };
+    let control = row()
+        .key("update-controls")
+        .gap(12.0)
+        .center_y()
+        .child(outline_button(p, "check-now", now, 30.0, |s, _| s.check_updates_now()))
+        .child(switch(p, "updates-switch", on, "Check for updates", |s, _| {
+            let u = s.settings().check_updates;
+            s.settings_mut().check_updates = !u;
+        }));
+    row_(v, "updates", "Check for updates", Some(&desc), control)
 }
 
 fn keys(v: V) -> El {

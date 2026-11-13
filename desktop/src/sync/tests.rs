@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use super::*;
@@ -565,4 +565,72 @@ fn a_busy_gateway_is_retried() {
     let (url, _) = s3_server_failing("testsecret", 1);
     let err = test(&custom(&url, "notes", "testsecret", false), 0, false).unwrap_err();
     assert_eq!(err, "The storage service did not answer in time (504). Quire tries again on the next sync.");
+}
+
+/// Syncs with `pins` as the device's pins, then takes the pins the sync returns.
+fn sync_pins(d: &Device, bucket: &mut Mem, r: &Remote, pins: &mut BTreeSet<String>) -> Outcome {
+    let out = run_with_pins(bucket, r, &d.root, d.name, &d.base, pins).unwrap();
+    for pl in &out.pulls {
+        d.write(&pl.path, &pl.text);
+    }
+    for (p, _) in &out.removes {
+        let _ = std::fs::remove_file(d.root.join(p));
+    }
+    out.save_base().unwrap();
+    *pins = out.pins.clone().unwrap();
+    out
+}
+
+fn set(v: &[&str]) -> BTreeSet<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn pin_merge_rules() {
+    let (l, r, b) = (set(&["a", "b"]), set(&["b", "c"]), set(&["b"]));
+    // Added on either side: kept.
+    assert_eq!(merge_pins(&l, Some(&r), Some(&b)), set(&["a", "b", "c"]));
+    // Removed on one side: removed.
+    assert_eq!(merge_pins(&set(&["a"]), Some(&set(&["a", "b"])), Some(&set(&["a", "b"]))), set(&["a"]));
+    assert_eq!(merge_pins(&set(&["a", "b"]), Some(&set(&["a"])), Some(&set(&["a", "b"]))), set(&["a"]));
+    // A manifest from a version without pins: the pins here stay.
+    assert_eq!(merge_pins(&l, None, Some(&b)), l);
+    // The first sync with pins on this device removes nothing.
+    assert_eq!(merge_pins(&l, Some(&r), None), set(&["a", "b", "c"]));
+}
+
+#[test]
+fn pins_sync() {
+    let mut bucket = Mem::default();
+    let r = remote(true);
+    let (laptop, phone) = (Device::new("pins", "laptop"), Device::new("pins", "phone"));
+    for n in ["A.md", "B.md", "Drafts/C.md"] {
+        laptop.write(n, "x");
+    }
+    let (mut lp, mut pp) = (set(&["A.md", "B.md"]), BTreeSet::new());
+    sync_pins(&laptop, &mut bucket, &r, &mut lp);
+    sync_pins(&phone, &mut bucket, &r, &mut pp);
+    assert_eq!(pp, set(&["A.md", "B.md"]), "the phone gets the laptop's pins");
+    // The phone unpins A and pins C. The laptop gets both changes.
+    pp = set(&["B.md", "Drafts/C.md"]);
+    sync_pins(&phone, &mut bucket, &r, &mut pp);
+    sync_pins(&laptop, &mut bucket, &r, &mut lp);
+    assert_eq!(lp, set(&["B.md", "Drafts/C.md"]));
+    // A rename on the laptop moves the pin, on the phone too.
+    std::fs::rename(laptop.root.join("B.md"), laptop.root.join("D.md")).unwrap();
+    lp = set(&["D.md", "Drafts/C.md"]);
+    sync_pins(&laptop, &mut bucket, &r, &mut lp);
+    sync_pins(&phone, &mut bucket, &r, &mut pp);
+    assert_eq!(pp, set(&["D.md", "Drafts/C.md"]));
+    assert_eq!(phone.read("D.md").as_deref(), Some("x"));
+    // A deleted note loses its pin on both devices.
+    std::fs::remove_file(phone.root.join("Drafts/C.md")).unwrap();
+    sync_pins(&phone, &mut bucket, &r, &mut pp);
+    assert_eq!(pp, set(&["D.md"]));
+    sync_pins(&laptop, &mut bucket, &r, &mut lp);
+    assert_eq!(lp, set(&["D.md"]));
+    // A sync with no pin change writes no pins.
+    let before = bucket.0.lock().unwrap().clone();
+    sync_pins(&laptop, &mut bucket, &r, &mut lp);
+    assert_eq!(*bucket.0.lock().unwrap(), before);
 }

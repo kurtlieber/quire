@@ -110,6 +110,9 @@ struct Manifest {
     /// Every folder, empty ones included. Folders that hold notes are here too.
     #[serde(default)]
     folders: BTreeSet<String>,
+    /// The pinned notes. None in a manifest from a Quire version without pins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pins: Option<BTreeSet<String>>,
 }
 
 /// What both sides had after the last sync on this device.
@@ -122,6 +125,9 @@ struct Base {
     /// did not change is not read again. Only this device uses it.
     #[serde(default)]
     stamps: BTreeMap<String, (u64, u64, String)>,
+    /// The pins after the last sync. None in a record from before pins synced.
+    #[serde(default)]
+    pins: Option<BTreeSet<String>>,
 }
 
 /// A file this device has: a note's text, or an image on disk.
@@ -187,6 +193,8 @@ pub struct Outcome {
     pub place: String,
     /// The notes folder this sync ran on.
     pub root: PathBuf,
+    /// The pins after this sync. The app adds and removes what changed from the pins it sent.
+    pub pins: Option<BTreeSet<String>>,
     /// The new base record and where it goes. The app saves it after it applied the rest, so
     /// a note that never reached the disk is not taken as in step.
     pub base: Option<(PathBuf, Vec<u8>)>,
@@ -393,26 +401,51 @@ enum Change {
     Remove(String),
     AddFolder(String),
     RemoveFolder(String),
+    AddPin(String),
+    RemovePin(String),
 }
 
-/// One sync of the folder at `root`, which must hold every saved note.
-pub fn run(r: &Remote, root: &Path, device: &str) -> Result<Outcome, String> {
+/// Merges pins as folders merge: a pin added on one side is added, and a pin removed on one
+/// side is removed. `remote` is None when the manifest comes from a version without pins: the
+/// pins here stay. `base` is None before the first sync with pins: nothing is removed.
+fn merge_pins(local: &BTreeSet<String>, remote: Option<&BTreeSet<String>>, base: Option<&BTreeSet<String>>) -> BTreeSet<String> {
+    let Some(remote) = remote else { return local.clone() };
+    let Some(base) = base else { return local | remote };
+    local
+        .union(remote)
+        .filter(|p| match (local.contains(*p), remote.contains(*p)) {
+            (true, true) => true,
+            // On one side only: added there, or removed on the other side.
+            _ => !base.contains(*p),
+        })
+        .cloned()
+        .collect()
+}
+
+/// One sync of the folder at `root`, which must hold every saved note. `pins` are the pinned
+/// notes here.
+pub fn run(r: &Remote, root: &Path, device: &str, pins: &BTreeSet<String>) -> Result<Outcome, String> {
     if r.encrypt && r.pass.chars().count() < 12 {
         return Err("The passphrase needs at least 12 characters.".into());
     }
     let store = open_store(r)?;
     let bp = base_path(r, root);
-    run_with(store.as_ref(), r, root, device, &bp)
+    run_with_pins(store.as_ref(), r, root, device, &bp, pins)
 }
 
+#[cfg(test)]
 fn run_with(store: &dyn Store, r: &Remote, root: &Path, device: &str, bp: &Option<PathBuf>) -> Result<Outcome, String> {
+    run_with_pins(store, r, root, device, bp, &BTreeSet::new())
+}
+
+fn run_with_pins(store: &dyn Store, r: &Remote, root: &Path, device: &str, bp: &Option<PathBuf>, pins: &BTreeSet<String>) -> Result<Outcome, String> {
     let mut store = Boxed(store);
     let keys = open_format(store.as_mut(), r, true)?;
     let manifest = read_manifest(store.as_mut(), &keys)?;
     let loaded = crate::vault::load(root).map_err(|e| format!("Could not read the folder: {e}"))?;
     let local_dirs = loaded.folders.into_iter().collect::<BTreeSet<String>>();
     let bp = bp.clone();
-    let Base { files: base, folders: base_dirs, stamps: old_stamps } = load_base(&bp);
+    let Base { files: base, folders: base_dirs, stamps: old_stamps, pins: base_pins } = load_base(&bp);
     let hash = |t: &[u8]| sign::sha256_hex(t);
     // Notes by their text, images by their bytes. An image keeps its hash while its size and
     // file time stay the same.
@@ -606,6 +639,16 @@ fn run_with(store: &dyn Store, r: &Remote, root: &Path, device: &str, bp: &Optio
     // The deepest folder goes first, so a parent is empty when its turn comes.
     out.rmdirs.sort_by_key(|f| std::cmp::Reverse(f.matches('/').count()));
 
+    // Pins, after the notes: a pin for a note that is gone goes too.
+    let mut new_pins = merge_pins(pins, manifest.pins.as_ref(), base_pins.as_ref());
+    new_pins.retain(|p| kept.contains(p));
+    let there = manifest.pins.clone().unwrap_or_default();
+    // A manifest without pins gets them only when there is a pin to write.
+    if manifest.pins.is_some() || !new_pins.is_empty() {
+        changes.extend(new_pins.difference(&there).map(|p| Change::AddPin(p.clone())));
+        changes.extend(there.difference(&new_pins).map(|p| Change::RemovePin(p.clone())));
+    }
+
     if !changes.is_empty() {
         // Read the manifest again just before writing, so a device that synced meanwhile keeps
         // its entries, then lay this sync's changes over it.
@@ -625,12 +668,21 @@ fn run_with(store: &dyn Store, r: &Remote, root: &Path, device: &str, bp: &Optio
                 Change::RemoveFolder(f) => {
                     fresh.folders.remove(&f);
                 }
+                Change::AddPin(p) => {
+                    fresh.pins.get_or_insert_with(BTreeSet::new).insert(p);
+                }
+                Change::RemovePin(p) => {
+                    if let Some(s) = &mut fresh.pins {
+                        s.remove(&p);
+                    }
+                }
             }
         }
         write_manifest(store.as_mut(), &keys, &fresh)?;
     }
     stamps.retain(|p, _| new_base.contains_key(p));
-    out.base = bp.map(|p| (p, serde_json::to_vec(&Base { files: new_base, folders: new_dirs, stamps }).unwrap_or_default()));
+    out.pins = Some(new_pins.clone());
+    out.base = bp.map(|p| (p, serde_json::to_vec(&Base { files: new_base, folders: new_dirs, stamps, pins: Some(new_pins) }).unwrap_or_default()));
     Ok(out)
 }
 

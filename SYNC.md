@@ -63,12 +63,15 @@ writes this file. Every later device reads it first and stops with an error in t
       "device": "laptop"
     }
   },
-  "folders": ["Archive", "Drafts"]
+  "folders": ["Archive", "Drafts"],
+  "pins": ["Drafts/Plan.md"]
 }
 ```
 
 `folders` lists every folder in the notes folder, empty folders included. A manifest without
-`folders` has no folders. `time` is the upload time in milliseconds since 1970. `device` is the
+`folders` has no folders. `pins` lists the pinned notes. A manifest without `pins` comes from a
+version without pins. Such a manifest says nothing about pins, so a device keeps its own pins
+and writes them. `time` is the upload time in milliseconds since 1970. `device` is the
 name of the device that uploaded the file. The desktop app uses the host name. The Android app
 uses the device model.
 
@@ -93,9 +96,10 @@ the hash that both sides had after the last sync on this device. It also lists t
 both sides had. Its JSON form is:
 
 ```json
-{"files": {"<path>": "<hash>"}, "folders": ["<path>"], "stamps": {"<image path>": [size, time, "<hash>"]}}
+{"files": {"<path>": "<hash>"}, "folders": ["<path>"], "stamps": {"<image path>": [size, time, "<hash>"]}, "pins": ["<path>"]}
 ```
 
+`pins` lists the pins after the last sync. A base without `pins` comes from before pins synced.
 `stamps` is optional. It holds the size, the file time in nanoseconds and the hash of each
 image, so an image that did not change is not read again. The desktop app keeps the base in
 `sync/` in its config folder, which is `~/.config/quire/sync/` on Linux. The base never goes to
@@ -133,6 +137,20 @@ it after the file steps. Such a file stayed, came down or went up in this sync.
 
 Move the deepest folders to `.trash` first. A folder moves with every file in it, also files that
 are not notes.
+
+Then merge the pins. Pins sync for each notes folder, in the manifest of its prefix.
+
+1. If the manifest has no `pins`, the result is the local pins.
+2. If the base has no `pins`, the result is the local pins plus the remote pins. Nothing is
+   removed in the first sync with pins.
+3. Otherwise, a pin on both sides stays. A pin on one side only stays if the base does not have
+   it, because the other side added it. If the base has it, the other side removed it, so it goes.
+4. Remove from the result each pin whose note is not kept after the file steps.
+
+If the result differs from the remote pins, add the pins that are new and remove the pins that
+are gone. A manifest without `pins` gets `pins` only when the result is not empty. Save the result
+in the base. The app takes the pins that the sync added or removed, compared with the pins it sent.
+A pin that changed on the device during the sync stays changed.
 
 After these steps, read the manifest again, apply the changes of this sync to it, and write it.
 The second read keeps the entries that another device wrote during the sync.

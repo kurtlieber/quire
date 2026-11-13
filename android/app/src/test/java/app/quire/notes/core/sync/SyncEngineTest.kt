@@ -51,7 +51,7 @@ class Device(tag: String, val name: String) {
 
     fun bytes(p: String): ByteArray? = File(root, p).takeIf { it.isFile }?.readBytes()
 
-    fun run(store: ObjStore, r: Remote): Outcome {
+    fun run(store: ObjStore, r: Remote, pins: Set<String> = emptySet()): Outcome {
         val l = LocalFs(root).load()
         val images = l.images.mapValues { (p, st) ->
             LocalImage(st.size, st.time) {
@@ -59,12 +59,15 @@ class Device(tag: String, val name: String) {
                 File(root, p).readBytes()
             }
         }
-        return SyncEngine.run(store, r, l.files, images, l.folders, name, SyncEngine.loadBase(baseFile))
+        return SyncEngine.run(store, r, l.files, images, l.folders, name, SyncEngine.loadBase(baseFile), pins)
     }
 
+    /** Syncs with [pins], applies the outcome, and gives the pins after the sync. */
+    fun syncPins(store: ObjStore, r: Remote, pins: Set<String>): Set<String> = sync(store, r, pins = pins).pins!!
+
     /** Syncs, then applies the outcome as the app does, then saves the base. */
-    fun sync(store: ObjStore, r: Remote, dirty: Set<String> = emptySet()): Outcome {
-        val out = run(store, r)
+    fun sync(store: ObjStore, r: Remote, dirty: Set<String> = emptySet(), pins: Set<String> = emptySet()): Outcome {
+        val out = run(store, r, pins)
         val l = LocalFs(root).load()
         val plan = SyncEngine.plan(out, l.files, l.folders, dirty)
         val pics = SyncEngine.planImages(out, l.images.keys) { p -> bytes(p)?.let { Sign.sha256Hex(it) } }
@@ -387,6 +390,68 @@ class SyncEngineTest {
         val clean = SyncEngine.planImages(out, setOf("a.png", "b.png")) { p -> Sign.sha256Hex(if (p == "a.png") "one" else "bee") }
         assertEquals(listOf("a.png"), clean.writes.map { it.first })
         assertEquals(listOf("b.png"), clean.deletes)
+    }
+
+    @Test
+    fun pinMergeRules() {
+        val l = setOf("a", "b")
+        val r = setOf("b", "c")
+        val b = setOf("b")
+        // Added on either side: kept.
+        assertEquals(setOf("a", "b", "c"), SyncEngine.mergePins(l, r, b))
+        // Removed on one side: removed.
+        assertEquals(setOf("a"), SyncEngine.mergePins(setOf("a"), setOf("a", "b"), setOf("a", "b")))
+        assertEquals(setOf("a"), SyncEngine.mergePins(setOf("a", "b"), setOf("a"), setOf("a", "b")))
+        // A manifest from a version without pins: the pins here stay.
+        assertEquals(l, SyncEngine.mergePins(l, null, b))
+        // The first sync with pins on this device removes nothing.
+        assertEquals(setOf("a", "b", "c"), SyncEngine.mergePins(l, r, null))
+    }
+
+    @Test
+    fun pinsSync() {
+        val bucket = Mem()
+        val r = remote(true)
+        val laptop = Device("pins", "laptop")
+        val phone = Device("pins", "phone")
+        for (n in listOf("A.md", "B.md", "Drafts/C.md")) laptop.write(n, "x")
+        var lp = laptop.syncPins(bucket, r, setOf("A.md", "B.md"))
+        var pp = phone.syncPins(bucket, r, emptySet())
+        assertEquals("the phone gets the pins of the laptop", setOf("A.md", "B.md"), pp)
+        // The phone unpins A and pins C. The laptop gets both changes.
+        pp = phone.syncPins(bucket, r, setOf("B.md", "Drafts/C.md"))
+        lp = laptop.syncPins(bucket, r, lp)
+        assertEquals(setOf("B.md", "Drafts/C.md"), lp)
+        // A rename on the laptop moves the pin, on the phone too.
+        assertTrue(File(laptop.root, "B.md").renameTo(File(laptop.root, "D.md")))
+        lp = laptop.syncPins(bucket, r, setOf("D.md", "Drafts/C.md"))
+        pp = phone.syncPins(bucket, r, pp)
+        assertEquals(setOf("D.md", "Drafts/C.md"), pp)
+        assertEquals("x", phone.read("D.md"))
+        // A deleted note loses its pin on both devices.
+        assertTrue(File(phone.root, "Drafts/C.md").delete())
+        pp = phone.syncPins(bucket, r, pp)
+        assertEquals(setOf("D.md"), pp)
+        lp = laptop.syncPins(bucket, r, lp)
+        assertEquals(setOf("D.md"), lp)
+        // A sync with no pin change writes no pins.
+        val before = bucket.objects.mapValues { it.value.toList() }
+        laptop.syncPins(bucket, r, lp)
+        assertEquals(before, bucket.objects.mapValues { it.value.toList() })
+    }
+
+    @Test
+    fun aManifestWithoutPinsGetsThemOnlyWhenThereArePins() {
+        val bucket = Mem()
+        val r = remote(false)
+        val d = Device("nopins", "laptop")
+        d.write("A.md", "a")
+        d.syncPins(bucket, r, emptySet())
+        assertFalse("no pins, no key", String(bucket.objects.getValue(".quire/manifest.json")).contains("\"pins\""))
+        assertEquals(setOf("A.md"), d.syncPins(bucket, r, setOf("A.md")))
+        assertTrue(String(bucket.objects.getValue(".quire/manifest.json")).contains("\"pins\":[\"A.md\"]"))
+        // The base keeps the pins after the sync.
+        assertEquals(setOf("A.md"), d.syncPins(bucket, r, setOf("A.md")))
     }
 
     @Test

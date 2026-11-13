@@ -14,11 +14,13 @@ mod lock;
 mod lock_app;
 mod mcp;
 mod md;
+mod pins;
 mod sample;
 mod store;
 mod sync;
 mod theme;
 mod ui;
+mod update;
 mod vault;
 mod watch;
 

@@ -2,6 +2,7 @@ package app.quire.notes.state
 
 import android.app.Application
 import android.content.ClipboardManager
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.os.Build
@@ -14,9 +15,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.quire.notes.BuildConfig
 import app.quire.notes.core.Fmt
 import app.quire.notes.core.Format
 import app.quire.notes.core.ImageSource
@@ -25,6 +28,9 @@ import app.quire.notes.core.Img
 import app.quire.notes.core.Lock
 import app.quire.notes.core.LockKey
 import app.quire.notes.core.Md
+import app.quire.notes.core.Pins
+import app.quire.notes.core.Release
+import app.quire.notes.core.Update
 import app.quire.notes.core.Sample
 import app.quire.notes.core.Sync
 import app.quire.notes.core.Themes
@@ -193,6 +199,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // The settings load without the old shared remote folder. Saving them once removes it from storage too.
         store.saveSettings(settings)
+        startUpdateChecks()
         viewModelScope.launch {
             val stored = withContext(io) { secrets.load() }
             if (stored.isNotEmpty()) settings = mergeSecrets(settings, stored)
@@ -274,6 +281,9 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             active = ses.active?.takeIf { it in files } ?: tabs.firstOrNull()
             recent = ses.recent.filter { it in files }.ifEmpty { tabs }
             expanded = ses.expanded
+            // Pins of files that are gone drop out when the folder loads.
+            pinned = Pins.filter(ses.pinned, loaded.files.keys)
+            pinsOpen = ses.pinsOpen
             query = ""
             leftPanel = Panel.Files
             focus = false
@@ -384,6 +394,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onResume() {
         startTicker()
+        updateOnResume()
         if (!resumedOnce) {
             resumedOnce = true
             return
@@ -426,6 +437,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             setStructure(merged, loaded.folders)
             tabs = tabs.filter { it in merged }
             recent = recent.filter { it in merged }
+            pinned = Pins.filter(pinned, merged.keys)
             val a = active
             if (a == null || a !in merged) {
                 active = tabs.firstOrNull()
@@ -529,7 +541,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun saveSession() {
         val v = vault ?: return
-        store.saveSession(v.id, Session(tabs, active, recent, expanded))
+        store.saveSession(v.id, Session(tabs, active, recent, expanded, pinned, pinsOpen))
     }
 
     private fun loadEditor(path: String?, sel: OpenSel?) {
@@ -687,6 +699,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         val gone = files.keys.filter { Md.inDir(it, dir) }.toSet()
         dirty.removeAll(gone)
         unlocked = unlocked - gone
+        pinned = Pins.removeIn(pinned, dir)
         setStructure(files - gone)
         dropFolder(dir)
         val i = active?.let { tabs.indexOf(it) } ?: -1
@@ -759,6 +772,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         setStructure(nf, folders + ancestors(np))
         tabs = tabs.map { if (it == old) np else it }
         recent = recent.map { if (it == old) np else it }
+        pinned = Pins.rename(pinned, old, np)
         expanded = expanded + ancestors(np)
         if (active == old) active = np
         // The open note may be the moved one or one whose links changed. The editor must show the new text.
@@ -787,6 +801,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteNote() {
         val p = active ?: return
         unlocked = unlocked - p
+        pinned = Pins.remove(pinned, p)
         dirty.remove(p)
         val i = tabs.indexOf(p)
         val nt = tabs.filter { it != p }
@@ -867,6 +882,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         setStructure(nf)
         tabs = tabs.map { if (it == old) np else it }
         recent = recent.map { if (it == old) np else it }
+        pinned = Pins.rename(pinned, old, np)
         active = np
         renaming = false
         if (editor.text != shown) {
@@ -924,7 +940,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
     fun wrapSelection(mk: String) = format(if (mk == "**") "bold" else "italic")
 
     /** The actions of the Markdown toolbar, in its order. */
-    val toolbar = listOf("bold", "italic", "strike", "heading", "link", "noteLink", "bullet", "number", "task", "quote", "code", "image", "lock")
+    val toolbar = listOf("bold", "italic", "strike", "heading", "link", "noteLink", "bullet", "number", "task", "quote", "code", "image", "pin", "lock")
 
     /** Runs one action of the Markdown toolbar on the selection of the editor. */
     fun format(action: String) {
@@ -934,6 +950,10 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (action == "lock") {
             askLock()
+            return
+        }
+        if (action == "pin") {
+            active?.let { togglePin(it) }
             return
         }
         val a = active ?: return
@@ -1151,6 +1171,215 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
     fun setWhen(v: String) = setSync { it.copy(whenSync = v) }
     fun toggleEncrypt() = setSync { it.copy(encrypt = !it.encrypt, connected = false) }
     fun setPass(v: String) = setSync { it.copy(pass = v, connected = false) }
+
+    // ---- Updates ---------------------------------------------------------------------------
+
+    /** The version of this app, for example 0.5.3. */
+    val appVersion: String = BuildConfig.VERSION_NAME
+
+    /** A debug build cannot take a release APK, because the signatures differ. So it does not check. */
+    val updatesAllowed: Boolean = !BuildConfig.DEBUG
+
+    /** A newer release with an APK, or null. */
+    var update by mutableStateOf<Release?>(null); private set
+
+    /** True while the APK of the update downloads. */
+    var updating by mutableStateOf(false); private set
+
+    /** True while Check now runs. */
+    var checking by mutableStateOf(false); private set
+
+    /** The answer of Check now, or null. */
+    var updateNote by mutableStateOf<String?>(null); private set
+
+    // When the last check started, on the elapsed-time clock. 0 before the first check.
+    private var lastCheck = 0L
+    // A downloaded APK that waits for the permission to install apps.
+    private var pendingInstall: File? = null
+
+    private val sixHours = 6L * 60 * 60 * 1000
+
+    /** The Update button shows. */
+    fun showUpdate(): Boolean = updatesAllowed && settings.checkUpdates && update != null
+
+    private fun updatesDir() = File(ctx.cacheDir, "updates")
+
+    /** Deletes old APKs, then checks 10 s after the start and every 6 hours while the app runs. */
+    private fun startUpdateChecks() {
+        updatesDir().listFiles()?.forEach { if (it.name.endsWith(".apk") || it.name.endsWith(".part")) it.delete() }
+        if (!updatesAllowed) return
+        viewModelScope.launch {
+            delay(10_000)
+            while (true) {
+                if (settings.checkUpdates) checkUpdate(manual = false)
+                delay(sixHours)
+            }
+        }
+    }
+
+    /** Back in front: a check when 6 hours have gone by, and the install that waited for its permission. */
+    private fun updateOnResume() {
+        if (!updatesAllowed) return
+        pendingInstall?.let { f ->
+            pendingInstall = null
+            if (canInstall()) install(f)
+        }
+        if (settings.checkUpdates && lastCheck != 0L && SystemClock.elapsedRealtime() - lastCheck >= sixHours) {
+            viewModelScope.launch { checkUpdate(manual = false) }
+        }
+    }
+
+    fun setCheckUpdates(on: Boolean) = updateSettings { it.copy(checkUpdates = on) }
+
+    /** Check now in the settings. It says "Quire is up to date." or shows the Update button. */
+    fun checkNow() {
+        if (!updatesAllowed || checking) return
+        checking = true
+        updateNote = null
+        viewModelScope.launch {
+            checkUpdate(manual = true)
+            checking = false
+        }
+    }
+
+    /** Asks GitHub for the latest release. A failed check stays quiet and tries again later. */
+    private suspend fun checkUpdate(manual: Boolean) {
+        lastCheck = SystemClock.elapsedRealtime()
+        val got = withContext(Dispatchers.IO) {
+            try {
+                Result.success(fetchLatest())
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+        got.onSuccess { r ->
+            update = r?.takeIf { Update.newer(it.version, appVersion) }
+            if (manual && update == null) updateNote = "Quire is up to date."
+        }
+    }
+
+    /** The latest release with an APK, or null. Sends only the two headers that the API asks for. */
+    private fun fetchLatest(): Release? {
+        val c = java.net.URI(Update.LATEST).toURL().openConnection() as java.net.HttpURLConnection
+        try {
+            c.connectTimeout = 15_000
+            c.readTimeout = 30_000
+            c.useCaches = false
+            c.setRequestProperty("Accept", "application/vnd.github+json")
+            c.setRequestProperty("User-Agent", "quire-updater")
+            if (c.responseCode != 200) throw IOException("The server answered ${c.responseCode}.")
+            val text = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            return Update.parse(text)
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    /** The Update button: downloads the APK to the cache folder, then opens the system installer. */
+    fun startUpdate() {
+        val r = update ?: return
+        if (updating) return
+        updating = true
+        viewModelScope.launch {
+            val f = withContext(Dispatchers.IO) {
+                try {
+                    download(r)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            updating = false
+            if (f == null) {
+                flash("Quire could not download the update. Try again later.")
+                return@launch
+            }
+            install(f)
+        }
+    }
+
+    private fun download(r: Release): File {
+        val dir = updatesDir()
+        dir.mkdirs()
+        val out = File(dir, "quire-${r.version}-android.apk")
+        val part = File(dir, out.name + ".part")
+        val c = java.net.URI(r.url).toURL().openConnection() as java.net.HttpURLConnection
+        try {
+            c.connectTimeout = 15_000
+            c.readTimeout = 60_000
+            // GitHub sends the file from another https host. HttpURLConnection follows that.
+            c.instanceFollowRedirects = true
+            c.setRequestProperty("User-Agent", "quire-updater")
+            if (c.responseCode != 200) throw IOException("The server answered ${c.responseCode}.")
+            c.inputStream.use { input ->
+                part.outputStream().use { o ->
+                    val buf = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > 512L * 1024 * 1024) throw IOException("The file is too large.")
+                        o.write(buf, 0, n)
+                    }
+                }
+            }
+        } finally {
+            c.disconnect()
+        }
+        if (part.length() == 0L || !part.renameTo(out)) throw IOException("The download is not complete.")
+        return out
+    }
+
+    private fun canInstall(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ctx.packageManager.canRequestPackageInstalls()
+
+    /**
+     * Opens the system installer for [f] with a FileProvider URI. Without the permission to
+     * install apps, it opens that setting first, and the install starts when the app comes back.
+     */
+    private fun install(f: File) {
+        try {
+            if (!canInstall()) {
+                pendingInstall = f
+                val i = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))
+                ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            }
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.updates", f)
+            val i = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
+        } catch (e: Exception) {
+            flash("Quire could not open the installer. Try again later.")
+        }
+    }
+
+    // ---- Pinned notes ----------------------------------------------------------------------
+
+    /** Pinned notes of the open folder, in the order they were pinned. */
+    var pinned by mutableStateOf<List<String>>(emptyList()); private set
+
+    /** The Pinned group of the tree is open. */
+    var pinsOpen by mutableStateOf(true); private set
+
+    fun isPinned(p: String): Boolean = p in pinned
+
+    /** Pins a note to the top of the tree, or takes the pin away. A new pin opens the group. */
+    fun togglePin(p: String) {
+        if (p !in files) return
+        val was = p in pinned
+        pinned = Pins.toggle(pinned, p)
+        if (!was) pinsOpen = true
+        persistSession()
+        // Pins sync, so a pin or an unpin syncs a moment later, unless sync is manual.
+        syncAuto(1500)
+    }
+
+    fun togglePinsOpen() {
+        pinsOpen = !pinsOpen
+        persistSession()
+    }
 
     // ---- Locked notes ----------------------------------------------------------------------
 
@@ -1567,6 +1796,8 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         flushAll(quiet = true)
         val device = Build.MODEL?.trim()?.ifEmpty { null } ?: "Android"
         val bf = baseFile(r, ref)
+        // The pins this sync starts with. The app applies only what the sync changed.
+        val sent = pinned.toSet()
         syncBusy = true
         syncJob = viewModelScope.launch {
             val res = try {
@@ -1577,7 +1808,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // An image is read only when its stamp changed since the last sync.
                 val pics = local.images.mapValues { (p, st) -> LocalImage(st.size, st.time) { f.readBytes(p) } }
-                val out = withContext(Dispatchers.IO) { SyncEngine.run(r, local.files, pics, local.folders, device, SyncEngine.loadBase(bf)) }
+                val out = withContext(Dispatchers.IO) { SyncEngine.run(r, local.files, pics, local.folders, device, SyncEngine.loadBase(bf), sent) }
                 Result.success(out to local)
             } catch (e: CancellationException) {
                 throw e
@@ -1587,7 +1818,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             syncJob = null
             syncBusy = false
             res.onSuccess { (out, local) ->
-                applySync(out, f, ref, bf, local)
+                applySync(out, f, ref, bf, local, sent)
                 syncError = null
                 val now = System.currentTimeMillis()
                 syncClock = now
@@ -1617,8 +1848,9 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
      * first, then the new base. If a write fails, the base goes, so the next sync loses no note.
      * A folder delete from a sync starts no other sync.
      */
-    private fun applySync(out: Outcome, f: VaultFs, ref: VaultRef, bf: File, local: Loaded) {
+    private fun applySync(out: Outcome, f: VaultFs, ref: VaultRef, bf: File, local: Loaded, sent: Set<String>) {
         val open = vault?.id == ref.id && fs === f
+        applyPins(out.pins, sent, ref, open)
         val plan = if (open) {
             SyncEngine.plan(out, files, folders, dirty.toSet())
         } else {
@@ -1713,11 +1945,13 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             for (p in plan.deletes) {
                 nf.remove(p)
                 unlocked = unlocked - p
+                pinned = Pins.remove(pinned, p)
             }
             for (d in plan.mkdirs) nd = nd + d + ancestors(d)
             setStructure(nf, nd)
             sealed.forEach { (p, t) -> outsideLockedText(p, t) }
             plan.rmdirs.forEach { dropFolder(it) }
+            plan.rmdirs.forEach { pinned = Pins.removeIn(pinned, it) }
             val gone = plan.deletes.toSet()
             if (gone.isNotEmpty()) {
                 val i = active?.let { tabs.indexOf(it) } ?: -1
@@ -1734,6 +1968,31 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             if (t != null && a !in dirty && editor.text != t) editor = TextFieldValue(t, shiftSelection(editor, t))
             updateCount()
             persistSession()
+        }
+    }
+
+    /**
+     * Pins: what the sync added or removed, compared with the pins it sent. A pin that changed
+     * here while the sync ran stays changed. New pins go at the end of the pin order. For a
+     * folder that is no longer open, the change goes into its saved session.
+     */
+    private fun applyPins(after: Set<String>?, sent: Set<String>, ref: VaultRef, open: Boolean) {
+        if (after == null) return
+        fun delta(now: List<String>): List<String> {
+            val next = now.filter { it in after || it !in sent }.toMutableList()
+            for (p in after.sorted()) if (p !in sent && p !in next) next.add(p)
+            return next
+        }
+        if (open) {
+            val next = delta(pinned)
+            if (next != pinned) {
+                pinned = next
+                persistSession()
+            }
+        } else {
+            val ses = store.loadSession(ref.id)
+            val next = delta(ses.pinned)
+            if (next != ses.pinned) store.saveSession(ref.id, ses.copy(pinned = next))
         }
     }
 
@@ -1819,6 +2078,7 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             if (has) Cmd("Delete note") { deleteNote() } else null,
             if (has) Cmd("Close tab") { active?.let { closeTab(it) } } else null,
             if (has) Cmd("Insert image") { requestImagePick() } else null,
+            if (has) Cmd(if (active?.let { isPinned(it) } == true) "Unpin note" else "Pin note") { active?.let { togglePin(it) } } else null,
             if (has && !locked && !open) Cmd("Lock note with a password…") { askLock() } else null,
             if (open) Cmd("Lock note now") { relock() } else null,
             if (open) Cmd("Remove password") { removePassword() } else null,

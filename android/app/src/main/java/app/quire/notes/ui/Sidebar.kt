@@ -1,22 +1,53 @@
 package app.quire.notes.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUp
@@ -27,38 +58,10 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -71,14 +74,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.foundation.text.BasicText
 import app.quire.notes.core.Md
+import app.quire.notes.core.Pins
 import app.quire.notes.state.Panel
 import app.quire.notes.state.QuireViewModel
 
 private const val ROW_NOTE = 0
 private const val ROW_FOLDER = 1
 private const val ROW_INPUT = 2
+private const val ROW_PINS = 3
+private const val ROW_PINNED = 4
 
 private class TreeRow(
     val name: String,
@@ -90,8 +95,18 @@ private class TreeRow(
     val folder get() = kind == ROW_FOLDER
 }
 
-/** The file tree, like treeRows() in the prototype. [inputIn] adds the new-folder field to that folder. */
-private fun treeRows(folders: Collection<String>, paths: Collection<String>, expanded: Set<String>, inputIn: String?): List<TreeRow> {
+/**
+ * The file tree, like treeRows() in the prototype. [inputIn] adds the new-folder field to that
+ * folder. The [pinned] notes show in the Pinned group at the top, and not in their folders.
+ */
+private fun treeRows(
+    folders: Collection<String>,
+    paths: Collection<String>,
+    expanded: Set<String>,
+    inputIn: String?,
+    pinned: List<String> = emptyList(),
+    pinsOpen: Boolean = true,
+): List<TreeRow> {
     class Node(val path: String) {
         val folders = HashMap<String, Node>()
         val files = ArrayList<String>()
@@ -105,8 +120,13 @@ private fun treeRows(folders: Collection<String>, paths: Collection<String>, exp
         return n
     }
     folders.forEach { add(it) }
-    paths.forEach { p -> val d = Md.dir(p); (if (d.isNotEmpty()) add(d) else root).files.add(p) }
+    val pins = pinned.toHashSet()
+    paths.forEach { p -> if (p !in pins) { val d = Md.dir(p); (if (d.isNotEmpty()) add(d) else root).files.add(p) } }
     val rows = ArrayList<TreeRow>()
+    if (pinned.isNotEmpty()) {
+        rows.add(TreeRow("Pinned", "pins", 0, ROW_PINS, pinsOpen))
+        if (pinsOpen) pinned.forEach { p -> rows.add(TreeRow(Md.base(p), p, 1, ROW_PINNED, false)) }
+    }
     fun walk(n: Node, depth: Int) {
         if (inputIn == n.path) rows.add(TreeRow("", n.path, depth, ROW_INPUT, false))
         n.folders.keys.sortedWith { a, b -> Md.collator.compare(a, b) }.forEach { name ->
@@ -296,7 +316,10 @@ private fun MenuItem(label: String, modifier: Modifier = Modifier, color: Color 
 private fun FilesPanel(vm: QuireViewModel, drag: DragState) {
     val c = LocalQ.current
     val inputIn = vm.newFolderParent
-    val rows = remember(vm.folders, vm.files.keys, vm.expanded, inputIn) { treeRows(vm.folders, vm.files.keys, vm.expanded, inputIn) }
+    val pinned = remember(vm.pinned, vm.files.keys) { Pins.sorted(vm.pinned, vm.files.keys) }
+    val rows = remember(vm.folders, vm.files.keys, vm.expanded, inputIn, pinned, vm.pinsOpen) {
+        treeRows(vm.folders, vm.files.keys, vm.expanded, inputIn, pinned, vm.pinsOpen)
+    }
     var noteMenu by remember { mutableStateOf<String?>(null) }
     var folderMenu by remember { mutableStateOf<String?>(null) }
     if (rows.isEmpty()) {
@@ -304,9 +327,11 @@ private fun FilesPanel(vm: QuireViewModel, drag: DragState) {
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        items(rows, key = { r -> listOf("f:", "d:", "n:")[r.kind] + r.path }) { r ->
+        items(rows, key = { r -> listOf("f:", "d:", "n:", "g:", "p:")[r.kind] + r.path }) { r ->
             when (r.kind) {
                 ROW_INPUT -> NewFolderRow(vm, r.depth, drag)
+                ROW_PINS -> PinsRow(vm, r, pinned.size)
+                ROW_PINNED -> NoteRow(vm, r, drag, noteMenu == "pin:" + r.path, { noteMenu = "pin:" + r.path }, { noteMenu = null }, Pins.folderLabel(r.path))
                 ROW_FOLDER -> FolderRow(vm, r, drag, folderMenu == r.path, { folderMenu = r.path }, { folderMenu = null })
                 else -> NoteRow(vm, r, drag, noteMenu == r.path, { noteMenu = r.path }, { noteMenu = null })
             }
@@ -388,7 +413,15 @@ private fun FolderRow(vm: QuireViewModel, r: TreeRow, drag: DragState, menu: Boo
 }
 
 @Composable
-private fun NoteRow(vm: QuireViewModel, r: TreeRow, drag: DragState, menu: Boolean, openMenu: () -> Unit, closeMenu: () -> Unit) {
+private fun NoteRow(
+    vm: QuireViewModel,
+    r: TreeRow,
+    drag: DragState,
+    menu: Boolean,
+    openMenu: () -> Unit,
+    closeMenu: () -> Unit,
+    folderLabel: String = "",
+) {
     val c = LocalQ.current
     val on = r.path == vm.active
     val haptics = LocalHapticFeedback.current
@@ -461,6 +494,8 @@ private fun NoteRow(vm: QuireViewModel, r: TreeRow, drag: DragState, menu: Boole
         ) {
             Spacer(Modifier.width(12.dp))
             Txt(r.name, 13.5.sp, if (on) c.ink else c.ink2, Modifier.weight(1f), weight = if (on) FontWeight.W500 else FontWeight.W400, maxLines = 1)
+            // A pinned note from a folder shows the name of the folder at the right.
+            if (folderLabel.isNotEmpty()) Mono(folderLabel, 11.sp, c.mute, Modifier.widthIn(max = 120.dp), maxLines = 1)
         }
         if (menu) {
             val close = {
@@ -470,6 +505,10 @@ private fun NoteRow(vm: QuireViewModel, r: TreeRow, drag: DragState, menu: Boole
             RowMenu(close) {
                 Mono(r.path, 11.sp, c.mute, Modifier.padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 8.dp), lineHeight = 16.sp)
                 if (!picking) {
+                    MenuItem(if (vm.isPinned(r.path)) "Unpin" else "Pin") {
+                        close()
+                        vm.togglePin(r.path)
+                    }
                     MenuItem("Move to…") { picking = true }
                 } else {
                     val here = Md.dir(r.path)
@@ -703,3 +742,28 @@ private fun TagsPanel(vm: QuireViewModel) {
         }
     }
 }
+
+/** The head of the Pinned group: a folder row with a pin in place of the folder icon. */
+@Composable
+private fun PinsRow(vm: QuireViewModel, r: TreeRow, count: Int) {
+    val c = LocalQ.current
+    val label = "$count pinned ${if (count == 1) "note" else "notes"}"
+    Row(
+        Modifier
+            .padding(horizontal = 8.dp)
+            .fillMaxWidth()
+            .height(32.dp)
+            .tap(RoundedCornerShape(6.dp)) { vm.togglePinsOpen() }
+            .semantics { contentDescription = label }
+            .padding(start = 8.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(Modifier.width(12.dp), contentAlignment = Alignment.Center) {
+            QIcon(QIcons.CHEVRON_RIGHT, 8f, 8.dp, 1.4f, c.mute, Modifier.rotate(if (r.open) 90f else 0f))
+        }
+        QIcon(QIcons.PIN, 16f, 15.dp, 1.25f, c.mute)
+        Txt(r.name, 13.5.sp, c.ink2, Modifier.weight(1f), weight = FontWeight.W500, maxLines = 1)
+    }
+}
+

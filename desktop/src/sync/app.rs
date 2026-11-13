@@ -15,7 +15,7 @@ pub struct Job<T> {
 }
 
 impl<T: Send + 'static> Job<T> {
-    fn spawn(waker: Option<rune::Waker>, f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Job<T> {
+    pub(crate) fn spawn(waker: Option<rune::Waker>, f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Job<T> {
         let slot: Arc<Mutex<Option<Result<T, String>>>> = Arc::default();
         let s2 = slot.clone();
         let _ = std::thread::Builder::new().name("quire-sync".into()).spawn(move || {
@@ -30,7 +30,7 @@ impl<T: Send + 'static> Job<T> {
         Job { slot }
     }
 
-    fn take(&self) -> Option<Result<T, String>> {
+    pub(crate) fn take(&self) -> Option<Result<T, String>> {
         self.slot.lock().ok().and_then(|mut g| g.take())
     }
 }
@@ -47,6 +47,8 @@ pub struct SyncState {
     manual: bool,
     /// The last sync failed, with this message.
     pub error: Option<String>,
+    /// The pins the running sync started with. The app applies only what the sync changed.
+    pins_sent: Option<std::collections::BTreeSet<String>>,
     /// When the last sync started, on the app clock. "Every 5 min" counts from it, so a sync
     /// that fails does not start again at once.
     last_try: Option<f64>,
@@ -147,9 +149,11 @@ impl App {
         self.flush_notes_quiet();
         let done = self.writer.barrier();
         let device = super::device_name();
+        let pins: std::collections::BTreeSet<String> = self.pinned.iter().cloned().collect();
+        self.sync.pins_sent = Some(pins.clone());
         self.sync.job = Some(Job::spawn(self.waker.clone(), move || {
             let _ = done.recv_timeout(Duration::from_secs(10));
-            super::run(&r, &root, &device)
+            super::run(&r, &root, &device, &pins)
         }));
     }
 
@@ -356,6 +360,20 @@ impl App {
             let known = self.vault.as_ref().is_some_and(|v| v.folders.contains(&f));
             if known && self.notes_in(&f).is_empty() {
                 self.remove_folder(&f);
+                any = true;
+            }
+        }
+        // Pins: what the sync added or removed. A pin changed here while it ran stays changed.
+        if let (Some(after), Some(sent)) = (out.pins.take(), self.sync.pins_sent.take()) {
+            let n = self.pinned.clone();
+            self.pinned.retain(|p| after.contains(p) || !sent.contains(p));
+            for p in after.difference(&sent) {
+                if !self.pinned.contains(p) {
+                    self.pinned.push(p.clone());
+                }
+            }
+            if self.pinned != n {
+                self.persist_later();
                 any = true;
             }
         }

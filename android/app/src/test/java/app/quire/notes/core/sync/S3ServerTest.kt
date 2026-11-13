@@ -20,10 +20,15 @@ class S3ServerTest {
     private lateinit var url: String
     private val secret = "testsecret"
 
-    /** Answers 504 to every n-th request, as a gateway in front of a busy store does. 0 never, 1 always. */
+    /**
+     * Answers 504 to the first try of every n-th request, as a gateway in front of a busy store
+     * does. 0 never, 1 always. A try again of the same request gets through, so the test does
+     * not depend on how the 8 parallel requests interleave.
+     */
     @Volatile
     private var failEvery = 0
     private val count = java.util.concurrent.atomic.AtomicInteger(0)
+    private val tries = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     @Before
     fun start() {
@@ -42,9 +47,10 @@ class S3ServerTest {
             val signed = listOf("host" to h("Host"), "x-amz-content-sha256" to h("x-amz-content-sha256"), "x-amz-date" to date)
             val want = Sign.SigV4("test", secret, region, "s3")
                 .authorization(method, path, "", signed, h("x-amz-content-sha256"), date, date.take(8))
-            val n = count.incrementAndGet()
+            val first = tries.merge("$method $path ${h("x-amz-content-sha256")}", 1, Int::plus) == 1
+            val fail = failEvery == 1 || (failEvery > 1 && first && count.incrementAndGet() % failEvery == 0)
             val (code, out) = when {
-                failEvery > 0 && n % failEvery == 0 -> 504 to "<html><body><h1>504 Gateway Time-out</h1></body></html>".toByteArray()
+                fail -> 504 to "<html><body><h1>504 Gateway Time-out</h1></body></html>".toByteArray()
                 auth != want || h("x-amz-content-sha256") != Sign.sha256Hex(body) ->
                     403 to "<Error><Code>SignatureDoesNotMatch</Code></Error>".toByteArray()
                 !path.startsWith("/notes/") -> 404 to "<Error><Code>NoSuchBucket</Code></Error>".toByteArray()

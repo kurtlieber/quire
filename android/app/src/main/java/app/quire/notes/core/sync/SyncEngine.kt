@@ -46,6 +46,8 @@ data class Base(
     val files: Map<String, String> = emptyMap(),
     val folders: Set<String> = emptySet(),
     val stamps: Map<String, ImgStamp> = emptyMap(),
+    /** The pins after the last sync. Null in a record from before pins synced. */
+    val pins: Set<String>? = null,
 )
 
 /** An image file of this device. [time] is its change time, or 0 when the store does not know it. */
@@ -80,11 +82,18 @@ class Outcome(
      * note or folder is lost.
      */
     val base: Base,
+    /** The pins after this sync. The app adds and removes what changed from the pins it sent. */
+    val pins: Set<String>? = null,
 )
 
 private class Entry(val hash: String, val obj: String, val time: Long, val device: String)
 
-private class Manifest(val files: TreeMap<String, Entry> = TreeMap(), val folders: TreeSet<String> = TreeSet())
+private class Manifest(
+    val files: TreeMap<String, Entry> = TreeMap(),
+    val folders: TreeSet<String> = TreeSet(),
+    /** The pinned notes. Null in a manifest from a Quire version without pins. */
+    var pins: TreeSet<String>? = null,
+)
 
 /**
  * Sync: keeps a notes folder the same on every device through an object store. Follows
@@ -261,13 +270,22 @@ object SyncEngine {
             is List<*> -> for (d in f) dirs.add(d as? String ?: throw bad)
             else -> throw bad
         }
-        return Manifest(out, dirs)
+        // A manifest from a version without pins says nothing about pins.
+        val pins = when (val f = m["pins"]) {
+            null -> null
+            is List<*> -> f.mapTo(TreeSet()) { it as? String ?: throw bad }
+            else -> throw bad
+        }
+        return Manifest(out, dirs, pins)
     }
 
     private fun writeManifest(store: ObjStore, keys: Keys?, m: Manifest) {
         val files = LinkedHashMap<String, Any?>()
         for ((p, e) in m.files) files[p] = linkedMapOf("hash" to e.hash, "object" to e.obj, "time" to e.time, "device" to e.device)
-        val json = Json.write(linkedMapOf("version" to 1, "files" to files, "folders" to m.folders.toList())).toByteArray(Charsets.UTF_8)
+        val body = linkedMapOf<String, Any?>("version" to 1, "files" to files, "folders" to m.folders.toList())
+        // The key stays out when the manifest has no pins, as the desktop app writes it.
+        m.pins?.let { body["pins"] = it.toList() }
+        val json = Json.write(body).toByteArray(Charsets.UTF_8)
         store.put(manifestKey(keys), if (keys != null) Crypto.seal(keys, json) else json)
     }
 
@@ -339,7 +357,8 @@ object SyncEngine {
                     val hash = l?.getOrNull(2) as? String
                     if (size != null && time != null && hash != null) stamps[k.toString()] = ImgStamp(size, time, hash)
                 }
-                Base(strings(files), (m["folders"] as? List<*>)?.mapNotNull { it as? String }?.toSet() ?: emptySet(), stamps)
+                val pins = (m["pins"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
+                Base(strings(files), (m["folders"] as? List<*>)?.mapNotNull { it as? String }?.toSet() ?: emptySet(), stamps, pins)
             } else {
                 Base(strings(m))
             }
@@ -353,7 +372,9 @@ object SyncEngine {
         val tmp = File(file.parentFile, file.name + ".tmp")
         val stamps = TreeMap<String, Any?>()
         for ((p, st) in base.stamps) stamps[p] = listOf(st.size, st.time, st.hash)
-        tmp.writeText(Json.write(linkedMapOf("files" to TreeMap(base.files), "folders" to base.folders.sorted(), "stamps" to stamps)))
+        val body = linkedMapOf<String, Any?>("files" to TreeMap(base.files), "folders" to base.folders.sorted(), "stamps" to stamps)
+        base.pins?.let { body["pins"] = it.sorted() }
+        tmp.writeText(Json.write(body))
         if (!tmp.renameTo(file)) {
             file.writeText(tmp.readText())
             tmp.delete()
@@ -361,14 +382,37 @@ object SyncEngine {
     }
 
     /** One sync. Checks the passphrase and opens the store from the settings first. */
-    fun run(r: Remote, local: Map<String, String>, localImages: Map<String, LocalImage>, localDirs: Set<String>, device: String, base: Base): Outcome {
+    fun run(
+        r: Remote,
+        local: Map<String, String>,
+        localImages: Map<String, LocalImage>,
+        localDirs: Set<String>,
+        device: String,
+        base: Base,
+        pins: Set<String> = emptySet(),
+    ): Outcome {
         checkPass(r)
-        return run(openStore(r), r, local, localImages, localDirs, device, base)
+        return run(openStore(r), r, local, localImages, localDirs, device, base, pins)
+    }
+
+    /**
+     * Merges pins as folders merge: a pin added on one side is added, and a pin removed on one
+     * side is removed. [remote] is null when the manifest comes from a version without pins:
+     * the pins here stay. [base] is null before the first sync with pins: nothing is removed.
+     */
+    fun mergePins(local: Set<String>, remote: Set<String>?, base: Set<String>?): Set<String> {
+        if (remote == null) return TreeSet(local)
+        if (base == null) return TreeSet(local + remote)
+        return (local + remote).filterTo(TreeSet()) { p ->
+            // On one side only: added there, or removed on the other side.
+            (p in local && p in remote) || p !in base
+        }
     }
 
     /**
      * One sync of a notes folder. [local] holds every saved note of the folder, [localDirs]
      * holds its folders, and [base] holds what both sides had after the last sync on this device.
+     * [pins] are the pinned notes of the folder now.
      */
     fun run(
         store: ObjStore,
@@ -378,6 +422,7 @@ object SyncEngine {
         localDirs: Set<String>,
         device: String,
         base: Base,
+        pins: Set<String> = emptySet(),
     ): Outcome {
         val keys = openFormat(store, r, true)
         val m = readManifest(store, keys)
@@ -562,7 +607,19 @@ object SyncEngine {
         // The deepest folder goes first, so a parent is empty when its turn comes.
         rmdirs.sortByDescending { d -> d.count { it == '/' } }
 
-        if (sets.isNotEmpty() || dels.isNotEmpty() || addDirs.isNotEmpty() || dropDirs.isNotEmpty()) {
+        // Pins, after the notes: a pin for a note that is gone goes too.
+        val newPins = TreeSet(mergePins(pins, m.pins, base.pins))
+        newPins.retainAll(kept)
+        val pinsThere = m.pins ?: TreeSet()
+        val addPins = ArrayList<String>()
+        val dropPins = ArrayList<String>()
+        // A manifest without pins gets them only when there is a pin to write.
+        if (m.pins != null || newPins.isNotEmpty()) {
+            newPins.filterTo(addPins) { it !in pinsThere }
+            pinsThere.filterTo(dropPins) { it !in newPins }
+        }
+
+        if (sets.isNotEmpty() || dels.isNotEmpty() || addDirs.isNotEmpty() || dropDirs.isNotEmpty() || addPins.isNotEmpty() || dropPins.isNotEmpty()) {
             // Read the manifest again just before the write, so a device that synced meanwhile
             // keeps its entries. Then lay the changes of this sync over it.
             val fresh = readManifest(store, keys)
@@ -570,10 +627,15 @@ object SyncEngine {
             for (p in dels) fresh.files.remove(p)
             fresh.folders.addAll(addDirs)
             fresh.folders.removeAll(dropDirs.toSet())
+            if (addPins.isNotEmpty()) fresh.pins = (fresh.pins ?: TreeSet()).also { it.addAll(addPins) }
+            fresh.pins?.removeAll(dropPins.toSet())
             writeManifest(store, keys, fresh)
         }
         stamps.keys.retainAll(newBase.keys)
-        return Outcome(pulls, removes, imagePulls, imageRemoves, uploaded, deletedRemote, conflicts, mkdirs, rmdirs, store.place, Base(newBase, newDirs, stamps))
+        return Outcome(
+            pulls, removes, imagePulls, imageRemoves, uploaded, deletedRemote, conflicts, mkdirs, rmdirs, store.place,
+            Base(newBase, newDirs, stamps, newPins), newPins,
+        )
     }
 
     /** The changes to make in the open folder after a sync. */
