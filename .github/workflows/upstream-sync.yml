@@ -1,18 +1,32 @@
 # Keeps this fork in step with bjarneo/quire, which takes no pull requests (FORK.md).
-# Once a day, when upstream's main has commits that this main lacks, it opens a pull request
-# from bjarneo:main into main and requests kurtlieber's review. The pull request follows
-# upstream's main as it moves, so at most one is open. The repository allows only merge
-# commits, so a merge keeps upstream's history and the next sync starts from it.
+# Kurt's choice (2026-11-13, kurtlieber/dotfiles#570): upstream releases merge, build and ship
+# with no review. Once a day, when upstream's latest release is not this fork's latest, it
+# merges that release into main, points Quire's updater at this fork again, tags the merge,
+# builds it with release.yml and makes it the latest release once every desktop file is there.
+# Quire's Update button then offers it.
+#
+# One exception: GitHub doesn't let a workflow push a change to workflow files. When upstream's
+# release changes its own workflows, this opens a pull request from bjarneo:main for Kurt
+# instead, and the next run after his merge ships the release.
 name: Upstream sync
 
 on:
   schedule:
     - cron: "17 22 * * *" # 06:17 in Manila
+  push:
+    branches: [main]
+    paths: [.github/workflows/upstream-sync.yml]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Merge and patch only: push, tag and build nothing"
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
-  pull-requests: write
+  contents: write # merge into main, tag, release
+  actions: write # start release.yml, keep this workflow on
+  pull-requests: write # the pull request when upstream changes its workflows
 
 concurrency:
   group: upstream-sync
@@ -21,40 +35,163 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       REPO: ${{ github.repository }}
-      UPSTREAM_HEAD: bjarneo:main
+      UPSTREAM: bjarneo/quire
       REVIEWER: kurtlieber
+      DRY_RUN: ${{ inputs.dry_run || false }}
     steps:
-      - name: Open a pull request when upstream has new commits
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Keep this scheduled workflow on
+        # GitHub turns off a scheduled workflow after 60 days without activity in a public
+        # repository. Turning it on again restarts that clock.
+        if: env.DRY_RUN != 'true'
+        run: gh api -X PUT "repos/$REPO/actions/workflows/upstream-sync.yml/enable" --silent || true
+
+      - name: Merge upstream's latest release
+        id: merge
         run: |
           set -euo pipefail
-          ahead=$(gh api "repos/$REPO/compare/main...$UPSTREAM_HEAD" --jq .ahead_by)
-          if [ "$ahead" = 0 ]; then
-            echo "main has every upstream commit"
-            exit 0
+          if [ "$DRY_RUN" != true ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::only a dry run may start from $GITHUB_REF"; exit 1
           fi
-          open=$(gh api "repos/$REPO/pulls?state=open&head=$UPSTREAM_HEAD" --jq length)
-          if [ "$open" != 0 ]; then
-            echo "an upstream pull request is already open; it follows upstream's main"
-            exit 0
+          tag=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::upstream's latest release $tag is not vX.Y.Z, which Quire's updater needs"; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          mine=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ "$mine" = "$tag" ]; then
+            echo "this fork's latest release is $tag"
+            echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag is tagged here but not the latest release: build it again"
+            echo "ship=build" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q --no-tags "https://github.com/$UPSTREAM.git" "refs/tags/$tag"
+          up=$(git rev-parse "FETCH_HEAD^{commit}")
+          if ! git merge-base --is-ancestor "$up" HEAD; then
+            if [ -n "$(git diff --name-only "HEAD...$up" -- .github/workflows)" ]; then
+              echo "::warning::upstream $tag changes its workflows, which this workflow can't push"
+              echo "ship=pr" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            base=$(git merge-base HEAD "$up")
+            if ! git merge -q --no-ff --no-commit "$up"; then
+              # A conflict is fine only in a file whose sole change here is the updater's
+              # address: take upstream's file, and the patch below puts the address back.
+              for f in $(git diff --name-only --diff-filter=U); do
+                own=$(git diff "$base" HEAD -- "$f" | grep '^[-+][^-+]' | grep -v -e "$UPSTREAM" -e "$REPO" || true)
+                if [ -n "$own" ]; then
+                  echo "::error::$f conflicts with a change of this fork; merge by hand (FORK.md)"; exit 1
+                fi
+                git checkout -q --theirs -- "$f"
+                git add -- "$f"
+              done
+            fi
+          fi
+
+          # The fork's patch: Quire's updater asks this fork for releases, not upstream.
+          files=$(git grep -l -F "$UPSTREAM" -- desktop/src || true)
+          if [ -n "$files" ]; then
+            sed -i "s#$UPSTREAM#$REPO#g" $files
+            git add -- $files
+          fi
+          if git grep -q -F "$UPSTREAM" -- desktop/src \
+            || ! git grep -q -F "\"https://github.com/$REPO/releases/download/\"" -- desktop/src; then
+            echo "::error::the updater's address moved; update the patch (FORK.md)"; exit 1
+          fi
+
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -1)
+          if [ "v$version" != "$tag" ]; then
+            # Quire compares the release tag with its own version, so a mismatch would offer
+            # the same update forever.
+            echo "::warning::main is Quire $version, not $tag; waiting for upstream's next release"
+            git merge --abort 2> /dev/null || git reset -q --hard HEAD
+            echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          if git rev-parse -q --verify MERGE_HEAD > /dev/null; then
+            git commit -q -m "Merge upstream $UPSTREAM $tag" -m "Points Quire's updater at $REPO (FORK.md)."
+          elif ! git diff --cached --quiet; then
+            git commit -q -m "Point Quire's updater at $REPO" -m "FORK.md, \"The fork's patch\"."
+          fi
+          git log --oneline -3
+          if [ "$DRY_RUN" = true ]; then
+            echo "dry run: would push main and tag $tag"
+            echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git push -q origin HEAD:main
+          git tag "$tag"
+          git push -q origin "refs/tags/$tag"
+          echo "ship=build" >> "$GITHUB_OUTPUT"
+
+      - name: Open a pull request for Kurt
+        if: steps.merge.outputs.ship == 'pr'
+        env:
+          TAG: ${{ steps.merge.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh api "repos/$REPO/pulls?state=open&head=bjarneo:main" --jq length)" != 0 ]; then
+            echo "the pull request is already open"; exit 0
           fi
           body=$(cat <<EOF
-          bjarneo/quire's main has $ahead commits that this fork's main lacks: https://github.com/$REPO/compare/main...$UPSTREAM_HEAD
+          Upstream's release $TAG changes its GitHub workflow files, and a workflow can't push those, so this one needs a merge by hand: https://github.com/$REPO/compare/main...bjarneo:main
 
-          Merge with **Create a merge commit**, the only method this repository allows. A squash would drop upstream's history, and the next sync would repeat these commits.
+          Merge with **Create a merge commit**, the only method this repository allows. The next sync after the merge points the updater at this fork, tags the release and builds it.
 
-          If GitHub reports a conflict with a change in this fork, see FORK.md, "When the pull request has a conflict".
-
-          After the merge, tag a fork release and bump the pin in kurtlieber/dotfiles (FORK.md, "Releases").
+          Ignore it, and Quire stays on the version it has.
           EOF
           )
           # maintainer_can_modify=false: the head branch is upstream's, and only its owner could
-          # let this repository's maintainers push to it. Left at the default true, GitHub refuses
-          # the pull request with 422 "fork_collab can't be granted by someone without permission".
+          # let this repository's maintainers push to it.
           number=$(gh api "repos/$REPO/pulls" -f title="Merge upstream bjarneo/quire main" \
-            -f head="$UPSTREAM_HEAD" -f base=main -f body="$body" \
+            -f head=bjarneo:main -f base=main -f body="$body" \
             -F maintainer_can_modify=false --jq .number)
           gh api "repos/$REPO/pulls/$number/requested_reviewers" -f "reviewers[]=$REVIEWER" --silent
           echo "opened pull request #$number"
+
+      - name: Build the release and make it the latest
+        if: steps.merge.outputs.ship == 'build'
+        env:
+          TAG: ${{ steps.merge.outputs.tag }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            # Not the latest until the files are attached, so no Update button points at a
+            # release that has nothing to download yet.
+            gh release create "$TAG" --verify-tag --latest=false --title "Quire $v" --notes "Quire $v from upstream [bjarneo/quire $TAG](https://github.com/bjarneo/quire/releases/tag/$TAG), merged and built in this fork with no review ([FORK.md](https://github.com/$REPO/blob/main/FORK.md)). What's new is in upstream's release notes.
+
+          The one change of this fork: Quire's **Update** button follows this fork's releases. There is no Android APK: upstream signs that by hand."
+          fi
+          since=$(date -u -d '-30 sec' +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run release.yml --ref main -f tag="$TAG"
+          run=""
+          for _ in $(seq 30); do
+            sleep 10
+            run=$(gh run list --workflow release.yml --event workflow_dispatch --limit 5 \
+              --json databaseId,createdAt --jq "map(select(.createdAt >= \"$since\"))[0].databaseId // empty")
+            [ -n "$run" ] && break
+          done
+          [ -n "$run" ] || { echo "::error::release.yml did not start"; exit 1; }
+          echo "release.yml run $run"
+          while [ "$(gh run view "$run" --json status --jq .status)" != completed ]; do sleep 60; done
+          if [ "$(gh run view "$run" --json conclusion --jq .conclusion)" != success ]; then
+            echo "::error::release.yml run $run failed; the next sync builds $TAG again"; exit 1
+          fi
+          have=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for a in "quire-$v-linux-x86_64.tar.gz" "quire-$v-macos-arm64.zip" "quire-$v-windows-x86_64.zip"; do
+            grep -qxF "$a" <<< "$have" || { echo "::error::$TAG has no $a"; exit 1; }
+          done
+          gh release edit "$TAG" --latest
+          echo "$TAG is the latest release"
