@@ -50,7 +50,11 @@ jobs:
           After the merge, tag a fork release and bump the pin in kurtlieber/dotfiles (FORK.md, "Releases").
           EOF
           )
+          # maintainer_can_modify=false: the head branch is upstream's, and only its owner could
+          # let this repository's maintainers push to it. Left at the default true, GitHub refuses
+          # the pull request with 422 "fork_collab can't be granted by someone without permission".
           number=$(gh api "repos/$REPO/pulls" -f title="Merge upstream bjarneo/quire main" \
-            -f head="$UPSTREAM_HEAD" -f base=main -f body="$body" --jq .number)
+            -f head="$UPSTREAM_HEAD" -f base=main -f body="$body" \
+            -F maintainer_can_modify=false --jq .number)
           gh api "repos/$REPO/pulls/$number/requested_reviewers" -f "reviewers[]=$REVIEWER" --silent
           echo "opened pull request #$number"
