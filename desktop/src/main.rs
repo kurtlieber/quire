@@ -8,6 +8,7 @@ mod cli;
 mod commands;
 mod folders;
 mod format;
+mod html2md;
 mod images;
 mod keys;
 mod lock;

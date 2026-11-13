@@ -16,6 +16,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.contextmenu.builder.item
+import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMenuComponents
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
@@ -40,6 +42,8 @@ import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -53,6 +57,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.quire.notes.core.Md
@@ -119,7 +124,22 @@ fun SourceEditor(vm: QuireViewModel, screenH: Dp) {
     val imeBottom = WindowInsets.ime.getBottom(density)
     val basePx = with(density) { set.size.sp.toPx() }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // The text selection menu has "Note actions…", which opens the note menu under the selection.
+    // The box and the field keep their places in the root, so the menu can sit at the selection.
+    var boxAt by remember { mutableStateOf(Offset.Zero) }
+    var fieldAt by remember { mutableStateOf(Offset.Zero) }
+    var actionsAt by remember { mutableStateOf<IntOffset?>(null) }
+    val openActions = {
+        val l = layout
+        val r = if (l != null && l.layoutInput.text.length == value.text.length) {
+            l.getBoundingBox(value.selection.min.coerceIn(0, maxOf(value.text.length - 1, 0)))
+        } else null
+        val x = fieldAt.x - boxAt.x + (r?.left ?: 0f)
+        val y = fieldAt.y - boxAt.y + (r?.bottom ?: 0f)
+        actionsAt = IntOffset(x.toInt(), y.toInt())
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { boxAt = it.positionInRoot() }) {
         val viewH = constraints.maxHeight
         val side = sidePad(maxWidth, focusMode)
 
@@ -195,8 +215,14 @@ fun SourceEditor(vm: QuireViewModel, screenH: Dp) {
                 contentAlignment = Alignment.TopCenter,
             ) {
                 val key = vm.docKey
-                // The editor selection is a little stronger than the one in fields.
-                CompositionLocalProvider(LocalTextSelectionColors provides TextSelectionColors(handleColor = c.acc, backgroundColor = c.selEditor)) {
+                // The editor selection is a little stronger than the one in fields. The paste
+                // clipboard turns formatted copies into Markdown.
+                val system = LocalClipboard.current
+                val paste = remember(system, vm) { PasteClipboard(system, vm) }
+                CompositionLocalProvider(
+                    LocalTextSelectionColors provides TextSelectionColors(handleColor = c.acc, backgroundColor = c.selEditor),
+                    LocalClipboard provides paste,
+                ) {
                     BasicTextField(
                         value = value,
                         onValueChange = { vm.onEditorChange(key, it) },
@@ -207,6 +233,14 @@ fun SourceEditor(vm: QuireViewModel, screenH: Dp) {
                                 // The field is the only child of the padded box, so it starts at the top padding.
                                 fieldY = with(density) { topPad.toPx() }
                                 fieldH = it.size.height
+                                fieldAt = it.positionInRoot()
+                            }
+                            .appendTextContextMenuComponents {
+                                separator()
+                                item(NoteActionsKey, "Note actions…") {
+                                    close()
+                                    openActions()
+                                }
                             }
                             .focusRequester(fr)
                             .onFocusChanged { vm.editorFocused = it.isFocused }
@@ -231,6 +265,9 @@ fun SourceEditor(vm: QuireViewModel, screenH: Dp) {
                 }
             }
         }
+        val a = vm.active
+        val at = actionsAt
+        if (a != null && at != null) NoteMenu(vm, a, onTab = false, at = at) { actionsAt = null }
     }
 }
 
@@ -287,3 +324,6 @@ private fun Modifier.linkGestures(vm: QuireViewModel, layout: () -> TextLayoutRe
             if (ctrl || (before != null && before.first == link.first)) vm.openLink(link.second)
         }
     }
+
+/** The key of the "Note actions…" item in the text selection menu. */
+private object NoteActionsKey

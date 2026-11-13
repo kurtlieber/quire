@@ -301,7 +301,7 @@ private fun VaultMenu(vm: QuireViewModel) {
 }
 
 @Composable
-private fun MenuItem(label: String, modifier: Modifier = Modifier, color: Color = LocalQ.current.ink, onClick: () -> Unit) {
+internal fun MenuItem(label: String, modifier: Modifier = Modifier, color: Color = LocalQ.current.ink, onClick: () -> Unit) {
     Box(
         modifier
             .fillMaxWidth()
@@ -426,7 +426,6 @@ private fun NoteRow(
     val on = r.path == vm.active
     val haptics = LocalHapticFeedback.current
     var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var picking by remember { mutableStateOf(false) }
     val lifted = drag.path == r.path && drag.moved
     Box {
         Row(
@@ -497,40 +496,7 @@ private fun NoteRow(
             // A pinned note from a folder shows the name of the folder at the right.
             if (folderLabel.isNotEmpty()) Mono(folderLabel, 11.sp, c.mute, Modifier.widthIn(max = 120.dp), maxLines = 1)
         }
-        if (menu) {
-            val close = {
-                picking = false
-                closeMenu()
-            }
-            RowMenu(close) {
-                Mono(r.path, 11.sp, c.mute, Modifier.padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 8.dp), lineHeight = 16.sp)
-                if (!picking) {
-                    MenuItem(if (vm.isPinned(r.path)) "Unpin" else "Pin") {
-                        close()
-                        vm.togglePin(r.path)
-                    }
-                    MenuItem("Move to…") { picking = true }
-                } else {
-                    val here = Md.dir(r.path)
-                    Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                        (listOf("" to "Folder root") + vm.folderList().map { it to "$it/" }).forEach { (dir, label) ->
-                            val current = dir == here
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(36.dp)
-                                    .tap(RoundedCornerShape(6.dp), enabled = !current) {
-                                        close()
-                                        vm.moveNote(r.path, dir)
-                                    }
-                                    .padding(horizontal = 10.dp),
-                                contentAlignment = Alignment.CenterStart,
-                            ) { Mono(if (current) "$label  (here)" else label, 12.sp, if (current) c.mute else c.ink, maxLines = 1) }
-                        }
-                    }
-                }
-            }
-        }
+        if (menu) NoteMenu(vm, r.path, onTab = false, onDismiss = closeMenu)
     }
 }
 
@@ -586,10 +552,11 @@ private fun NewFolderRow(vm: QuireViewModel, depth: Int, drag: DragState) {
 
 /** A small menu under a tree row, styled like the vault menu. */
 @Composable
-private fun RowMenu(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun RowMenu(onDismiss: () -> Unit, at: IntOffset? = null, content: @Composable ColumnScope.() -> Unit) {
     val c = LocalQ.current
+    // Under the row by default. [at] puts the menu at a point of the parent, such as a long-press point.
     Popup(
-        offset = IntOffset(with(LocalDensity.current) { 24.dp.roundToPx() }, with(LocalDensity.current) { 34.dp.roundToPx() }),
+        offset = at ?: IntOffset(with(LocalDensity.current) { 24.dp.roundToPx() }, with(LocalDensity.current) { 34.dp.roundToPx() }),
         onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true),
     ) {

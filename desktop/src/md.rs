@@ -832,6 +832,28 @@ pub fn resolve(dir: &str, rel: &str) -> Option<String> {
 }
 
 /// Splits a note into preview blocks, as the prototype's `renderPreview` does.
+/// The lines of a paragraph, a quote or a list item as the preview shows them: each line on its
+/// own line, as in the source. Spaces around a line go. A `\` or two spaces that end a line mark
+/// a line break in Markdown, and the line breaks anyway, so the mark goes too. A `\` at the end
+/// of the last line stays, as Markdown keeps it.
+fn join_lines(lines: &[&str]) -> String {
+    let n = lines.len();
+    let mut out = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        let mut t = l.trim();
+        if i + 1 < n {
+            if let Some(s) = t.strip_suffix('\\').filter(|s| !s.ends_with('\\')) {
+                t = s.trim_end();
+            }
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(t);
+    }
+    out
+}
+
 pub fn blocks(text: &str) -> Vec<Block> {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut out = Vec::new();
@@ -878,7 +900,7 @@ pub fn blocks(text: &str) -> Vec<Block> {
                 buf.push(&lines[i][p..]);
                 i += 1;
             }
-            out.push(Block::Quote { line: start, text: buf.join(" ") });
+            out.push(Block::Quote { line: start, text: join_lines(&buf) });
             continue;
         }
         if is_list(ln) {
@@ -892,8 +914,15 @@ pub fn blocks(text: &str) -> Vec<Block> {
                     None => (false, false, l.after),
                 };
                 let indent = raw[..l.indent].chars().map(|c| if c == '\t' { 2 } else { 1 }).sum();
-                items.push(Item { indent, marker: raw[l.marker.clone()].to_string(), task, done, text: raw[text_at..].to_string(), line: i });
+                let item_line = i;
+                let mut own = vec![&raw[text_at..]];
                 i += 1;
+                // Lines under an item that start no new block belong to the item, indented or not.
+                while i < lines.len() && !lines[i].trim().is_empty() && !is_block_start(lines[i]) {
+                    own.push(lines[i]);
+                    i += 1;
+                }
+                items.push(Item { indent, marker: raw[l.marker.clone()].to_string(), task, done, text: join_lines(&own), line: item_line });
             }
             out.push(Block::List { line: start, items });
             continue;
@@ -903,7 +932,7 @@ pub fn blocks(text: &str) -> Vec<Block> {
             buf.push(lines[i]);
             i += 1;
         }
-        out.push(Block::Para { line: start, text: buf.join(" ") });
+        out.push(Block::Para { line: start, text: join_lines(&buf) });
     }
     out
 }
@@ -981,4 +1010,24 @@ mod image_tests {
         assert_eq!(link_path("My cat (1).png"), "My%20cat%20%281%29.png");
         assert!(is_image("x/Y.JPG") && !is_image("x.md"));
     }
+
+    #[test]
+    fn line_breaks_stay() {
+        let b = blocks("one\ntwo  \nthree\\\nfour\\\n\n- a\n  more a\nlazy a\n- b\n\n> q1\n> q2");
+        match &b[..] {
+            [Block::Para { text: p, .. }, Block::List { items, .. }, Block::Quote { text: q, .. }] => {
+                assert_eq!(p, "one\ntwo\nthree\nfour\\");
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].text, "a\nmore a\nlazy a");
+                assert_eq!((items[0].line, items[1].line), (5, 8));
+                assert_eq!(items[1].text, "b");
+                assert_eq!(q, "q1\nq2");
+            }
+            other => panic!("{other:?}"),
+        }
+        // A heading, a quote or a new item ends a list item.
+        let b = blocks("- a\n# H\n- b\n> q");
+        assert!(matches!(&b[..], [Block::List { .. }, Block::Heading { .. }, Block::List { .. }, Block::Quote { .. }]), "{b:?}");
+    }
+
 }

@@ -85,15 +85,18 @@ Quire saves an edit 500 ms after you stop typing, and again when the app goes to
 - To make a folder, use "New folder" in the drawer or in the command palette.
 - To add a note or a folder inside a folder, long-press the folder. The "+" at the end of a folder row adds a note there.
 - To delete a folder, long-press it and select "Delete folder". A folder with notes asks first. The folder moves to `.trash` with every file in it.
-- To move a note, long-press it in the drawer and drag it onto a folder. Drop it on the folder name at the top to move it to the root. You can also long-press a note and select "Move to…".
+- To open the note menu, long-press a note in the drawer, a tab, or the note text in preview mode. The menu has Pin or Unpin, Rename, Move to…, Share, the lock items, and Delete note. A tab also has Close tab and Close other tabs. Delete note asks first, and moves the note to `.trash`. A locked note has no Share until you unlock it.
+- A long-press in source mode selects text. To open the note menu from there, select "Note actions…" in the text selection menu. When the selection menu is full, the item is under the "⋮" button.
+- To move a note, long-press it in the drawer and drag it onto a folder. Drop it on the folder name at the top to move it to the root. You can also select "Move to…" in the note menu.
 - In the quick switcher, type a path such as `Drafts/Idea` to create a note in that folder.
-- To pin a note, long-press it and select "Pin", or use the pin button in the toolbar. The note shows in the Pinned group at the top of the drawer, with its folder name next to it. The file stays in its folder. Pins are saved for each notes folder and sync with it, in the same way as on the desktop. A pin or an unpin starts a sync a moment later, unless sync is set to "Manually".
+- To pin a note, select "Pin" in the note menu, or use the pin button in the toolbar. The note shows in the Pinned group at the top of the drawer, with its folder name next to it. The file stays in its folder. Pins are saved for each notes folder and sync with it, in the same way as on the desktop. A pin or an unpin starts a sync a moment later, unless sync is set to "Manually".
 
 ## Writing
 
 - While the editor has focus, a toolbar above the keyboard makes text bold, italic or struck through, and adds headings, links, note links, lists, tasks, quotes, code and images. It scrolls sideways when it does not fit. The rules are the same as on the desktop.
 - The image button opens the photo picker. Quire copies the image into `attachments/` in the notes folder and links it at the caret. An image that another app drops on the editor goes in the same way.
 - The preview shows `![alt](path)` images relative to the note, `![[name.png]]` images from anywhere in the folder, and `https://` images.
+- A paste of formatted text from a web page, a mail or a document becomes Markdown, with its headings, lists, links and emphasis. A web address pasted over selected text links that text. Inside a code block, a paste stays plain text. This works for Paste in the text menu and for `Ctrl+V`, but not for the clipboard suggestion of the keyboard.
 
 ## Themes
 

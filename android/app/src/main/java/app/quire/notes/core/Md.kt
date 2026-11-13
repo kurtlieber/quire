@@ -464,6 +464,23 @@ object Md {
         return cand
     }
 
+    /**
+     * The lines of a paragraph, a quote or a list item, joined so that each one keeps its own
+     * line, as in the source. Spaces around a line go. A backslash or two spaces that end a line
+     * mark a line break in Markdown, and the line breaks anyway, so the mark goes too. A backslash
+     * at the end of the last line stays, as Markdown keeps it. Follows join_lines in desktop/src/md.rs.
+     */
+    fun joinLines(lines: List<String>): String {
+        val out = StringBuilder()
+        lines.forEachIndexed { i, l ->
+            var t = l.trim()
+            if (i + 1 < lines.size && t.endsWith("\\") && !t.dropLast(1).endsWith("\\")) t = t.dropLast(1).trimEnd()
+            if (i > 0) out.append('\n')
+            out.append(t)
+        }
+        return out.toString()
+    }
+
     fun parseBlocks(text: String): List<Block> {
         val lines = text.split('\n')
         val out = ArrayList<Block>()
@@ -504,7 +521,7 @@ object Md {
             if (quoteRe.containsMatchIn(ln)) {
                 val buf = ArrayList<String>()
                 while (i < lines.size && quoteRe.containsMatchIn(lines[i])) buf.add(lines[i++].replace(quoteStrip, ""))
-                out.add(BQuote(start, buf.joinToString(" ")))
+                out.add(BQuote(start, joinLines(buf)))
                 continue
             }
             if (isList(ln)) {
@@ -516,24 +533,29 @@ object Md {
                         continue
                     }
                     val box = mm.groups[3]?.value
+                    val itemLine = i
+                    val own = arrayListOf(mm.groupValues[4])
+                    i++
+                    // Lines under an item that start no new block belong to the item, indented or not.
+                    while (i < lines.size && lines[i].isNotBlank() && !isStart(lines[i])) own.add(lines[i++])
                     items.add(
                         LItem(
                             ind = mm.groupValues[1].replace("\t", "  ").length,
                             mk = mm.groupValues[2],
                             task = box != null,
                             done = box != null && box != " ",
-                            text = mm.groupValues[4],
-                            line = i
+                            text = joinLines(own),
+                            // The line of the marker, so a tap on the task box finds the line.
+                            line = itemLine,
                         )
                     )
-                    i++
                 }
                 if (items.isNotEmpty()) out.add(BList(start, items[0].mk.any { it.isDigit() }, items))
                 continue
             }
             val buf = ArrayList<String>()
             while (i < lines.size && lines[i].isNotBlank() && (buf.isEmpty() || !isStart(lines[i]))) buf.add(lines[i++])
-            out.add(BPara(start, buf.joinToString(" ")))
+            out.add(BPara(start, joinLines(buf)))
         }
         return out
     }

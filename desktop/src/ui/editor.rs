@@ -42,8 +42,11 @@ pub fn body(v: V) -> El {
     if top + side > 0.0 {
         sheet = sheet.border_sides([top, 0.0, 0.0, side], p.line).border_layout();
     }
-    let area = col().key("doc-area").grow(1.0).min_w(0.0).min_h(0.0).h_full();
-    let mut inner = row().key("sheet-row").grow(1.0).min_h(0.0).w_full().child(area.child(doc_scroll(v)));
+    let mut area = col().key("doc-area").grow(1.0).min_w(0.0).min_h(0.0).h_full().child(doc_scroll(v));
+    if shows_toolbar(v) {
+        area = area.child(toolbar_dock(v));
+    }
+    let mut inner = row().key("sheet-row").grow(1.0).min_h(0.0).w_full().child(area);
     if v.right_visible() {
         inner = inner.child(outline::outline(v));
     }
@@ -79,10 +82,7 @@ fn doc_scroll(v: V) -> El {
     if v.has_doc() {
         let size = s.settings().size as f32;
         let pad_x = if focus { clamp(20.0, v.vw * 0.06, 64.0) } else { clamp(20.0, v.vw * 0.05, 56.0) };
-        // The toolbar floats TOOLBAR_TOP below the title bar, and the breadcrumb starts 64
-        // points down, as far as it did under the old full-width bar.
-        let bar = shows_toolbar(v);
-        let (pad_t, pad_b) = if focus { (v.vh * 0.16, v.vh * 0.48) } else { (if bar { TOOLBAR_TOP } else { 34.0 }, v.vh * 0.38) };
+        let (pad_t, pad_b) = if focus { (v.vh * 0.16, v.vh * 0.48) } else { (34.0, v.vh * 0.38) };
         let ch = if focus { 68.0 } else { 72.0 };
         let mut column = col()
             .key("doc-col")
@@ -101,9 +101,6 @@ fn doc_scroll(v: V) -> El {
             });
         if s.settings().width == "readable" {
             column = column.max_w(size * 0.6 * ch + 2.0 * pad_x);
-        }
-        if bar {
-            column = column.child(toolbar(v));
         }
         if !focus {
             column = column.child(crumb(v));
@@ -126,15 +123,16 @@ fn doc_scroll(v: V) -> El {
     // height and leave nothing to scroll.
     let mut scroll = col().key("doc-scroll").grow(1.0).min_w(0.0).min_h(0.0).w_full().scroll(ScrollSpec { stick_bottom: false });
     if shows_toolbar(v) {
-        // Text fades out at the top, so the toolbar floats on a clear band. The caret stays
-        // below the toolbar while you type.
-        scroll = scroll.scroll_fade(ScrollFade::strength(TOOLBAR_TOP + TOOLBAR_H + 8.0).with_end(ScrollFade::strength(0.0))).scroll_margin(TOOLBAR_TOP + TOOLBAR_H + 12.0);
+        // Text fades out at the bottom, so the toolbar floats on a clear band. The caret stays
+        // above the toolbar while you type.
+        let band = TOOLBAR_BOTTOM + TOOLBAR_H;
+        scroll = scroll.scroll_fade(ScrollFade::strength(band + 12.0).end_only()).scroll_margin(band + 16.0);
     }
     scroll.child(content)
 }
 
-/// The space above the floating toolbar, at rest and while it sticks.
-const TOOLBAR_TOP: f32 = 10.0;
+/// The space under the floating toolbar, above the status bar.
+const TOOLBAR_BOTTOM: f32 = 16.0;
 /// The height of the floating toolbar.
 const TOOLBAR_H: f32 = 36.0;
 
@@ -192,8 +190,13 @@ fn pin_button(v: V) -> El {
         .child(icon(&PIN, 16.0).color(if on { p.acc } else { p.mute }).group_color(if on { p.acc } else { p.ink }))
 }
 
-/// The formatting toolbar: a pill at the top of the note column. It scrolls with the note
-/// until it reaches TOOLBAR_TOP below the title bar, then stays there, and the note scrolls
+/// The formatting toolbar's place: a band across the bottom of the note that centres the
+/// toolbar. The band takes no presses, so a click beside the toolbar reaches the text under it.
+fn toolbar_dock(v: V) -> El {
+    row().key("toolbar-dock").pin(Some(0.0), None, Some(0.0), Some(TOOLBAR_BOTTOM)).justify_center().child(toolbar(v))
+}
+
+/// The formatting toolbar: a pill that floats over the bottom of the note. The note scrolls
 /// under it.
 fn toolbar(v: V) -> El {
     use super::widgets::{BOLD, BULLETS, CODE, HEADING, IMAGE, ITALIC, LINK, NUMBERS, QUOTE, STRIKE, TASK, WIKI, icon_button};
@@ -202,35 +205,25 @@ fn toolbar(v: V) -> El {
     let k = crate::keys::k;
     let btn = |key: &str, glyph: &'static rune::Icon, help: String, f: Fmt| icon_button(p, key, glyph, 16.0, &help).on_press_tx(move |s: &mut App, tx| s.format(f, tx));
     let sep = |key: &str| el().key(key).w(1.0).h(16.0).mx(5.0).fill(p.line);
-    // No border. At rest the toolbar has no background, as the text around it. The background
-    // and its shadow come in while the note scrolls under the toolbar.
-    let shadow = if p.dark { 0.5 } else { 0.12 };
-    let back = el()
-        .key("toolbar-back")
-        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .radius(10.0)
-        .fill(p.bg.alpha(0.88))
-        .backdrop_blur(12.0)
-        .box_shadow(rune::Shadow { x: 0.0, y: 6.0, blur: 22.0, spread: -4.0, color: Color::BLACK.alpha(shadow), inset: false })
-        .stuck_reveal(8.0);
+    // No border: a shadow lifts the toolbar off the page. On a dark page a shadow hardly shows,
+    // so the toolbar is a little lighter than the page there.
+    let (fill, near, far) = if p.dark { (p.bg.mix(p.ink, 0.05), 0.45, 0.55) } else { (p.bg, 0.08, 0.14) };
     row()
         .key("toolbar")
-        .self_start()
         .h(TOOLBAR_H)
-        .mb(64.0 - TOOLBAR_TOP - TOOLBAR_H)
-        // The ink of the first icon lines up with the text: 4 points of padding, then the 9.5
-        // points from a button's edge to its glyph.
-        .ml(-13.5)
         .px(4.0)
         .gap(2.0)
         .center_y()
-        .sticky_top(TOOLBAR_TOP)
+        .radius(12.0)
+        .fill(fill.alpha(0.92))
+        .backdrop_blur(12.0)
+        .box_shadow(rune::Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(near), inset: false })
+        .box_shadow(rune::Shadow { x: 0.0, y: 8.0, blur: 28.0, spread: -6.0, color: Color::BLACK.alpha(far), inset: false })
         // A press between the buttons stays on the toolbar. The column under it would move
         // the caret to the end of the note.
         .on_press(|_: &mut App| {})
         .role("toolbar")
         .label("Formatting")
-        .child(back)
         .child(btn("fmt-bold", &BOLD, format!("Bold ({})", k(&["Mod", "B"])), Fmt::Bold))
         .child(btn("fmt-italic", &ITALIC, format!("Italic ({})", k(&["Mod", "I"])), Fmt::Italic))
         .child(btn("fmt-strike", &STRIKE, "Strikethrough".into(), Fmt::Strike))

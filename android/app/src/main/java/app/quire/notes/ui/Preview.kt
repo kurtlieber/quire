@@ -38,16 +38,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -55,9 +58,9 @@ import androidx.compose.ui.unit.sp
 import app.quire.notes.core.BCode
 import app.quire.notes.core.BHead
 import app.quire.notes.core.BHr
+import app.quire.notes.core.BImage
 import app.quire.notes.core.BList
 import app.quire.notes.core.BPara
-import app.quire.notes.core.BImage
 import app.quire.notes.core.BQuote
 import app.quire.notes.core.Block
 import app.quire.notes.core.LItem
@@ -139,7 +142,15 @@ fun PreviewPane(vm: QuireViewModel, screenH: Dp) {
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // A long-press anywhere on the note opens the note menu at the press point.
+    var actionsAt by remember { mutableStateOf<IntOffset?>(null) }
+    val haptics = LocalHapticFeedback.current
+    BoxWithConstraints(
+        Modifier.fillMaxSize().longPressAt { p ->
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            actionsAt = IntOffset(p.x.toInt(), p.y.toInt())
+        }
+    ) {
         val side = sidePad(maxWidth, vm.focus)
         val colMax = columnMax(vm)
         Column(Modifier.fillMaxSize().verticalScroll(scroll), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -166,6 +177,9 @@ fun PreviewPane(vm: QuireViewModel, screenH: Dp) {
                 Spacer(Modifier.height(prevBottom))
             }
         }
+        val a = vm.active
+        val at = actionsAt
+        if (a != null && at != null) NoteMenu(vm, a, onTab = false, at = at) { actionsAt = null }
     }
 }
 

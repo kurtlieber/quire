@@ -255,16 +255,41 @@ impl App {
         self.link_images(&[format!("{ATTACHMENTS}/{name}")], tx)
     }
 
-    /// A paste into the editor: image files and a copied image become links. Other pastes
-    /// go to the text field as usual.
+    /// A paste into the editor:
+    /// - Image files and a copied image become links.
+    /// - Formatted text from a web page or a document goes in as Markdown.
+    /// - A web address pasted over selected text links that text.
+    ///
+    /// Other pastes, and every paste inside a code block, go to the text field as usual.
     pub fn paste_content(&mut self, content: &rune::ClipboardContent, tx: &mut Tx) -> bool {
         if content.files().iter().any(|f| md::is_image(&f.to_string_lossy())) {
             return self.insert_images(content.files(), tx);
         }
-        match content.image() {
-            Some(img) if content.text().trim().is_empty() => self.paste_image(img.png(), tx),
-            _ => false,
+        if let Some(img) = content.image().filter(|_| content.text().trim().is_empty()) {
+            return self.paste_image(img.png(), tx);
         }
+        let e = self.cur_edit();
+        let (a, b) = (e.anchor.min(e.focus), e.anchor.max(e.focus).min(e.text.len()));
+        if in_code_block(&e.text, a) {
+            return false;
+        }
+        let insert = if let Some(html) = content.html().filter(|h| crate::html2md::has_formatting(h)) {
+            crate::html2md::convert(html)
+        } else {
+            let url = content.text().trim();
+            let sel = &e.text[a..b];
+            if !is_web_address(url) || a == b || sel.contains('\n') || is_web_address(sel.trim()) {
+                return false;
+            }
+            format!("[{sel}]({url})")
+        };
+        if insert.trim().is_empty() {
+            return false;
+        }
+        self.cur_edit().paste(&insert);
+        self.after_edit();
+        self.focus_editor(tx);
+        true
     }
 
     /// Asks for an image file, then links it in the active note.
@@ -313,5 +338,38 @@ impl App {
         self.images.forget_index();
         self.focus_editor(tx);
         true
+    }
+}
+
+/// Whether `at` is inside a fenced code block: an odd number of fence lines come before it.
+fn in_code_block(text: &str, at: usize) -> bool {
+    let at = at.min(text.len());
+    let before = text.get(..at).unwrap_or(text);
+    let fences = before.split('\n').filter(|l| {
+        let t = l.trim_start();
+        t.starts_with("```") || t.starts_with("~~~")
+    });
+    // The line the caret is on counts only when it ends before the caret.
+    fences.count() % 2 == 1
+}
+
+/// One web address and nothing else.
+fn is_web_address(s: &str) -> bool {
+    (s.starts_with("https://") || s.starts_with("http://")) && s.len() > 8 && !s.chars().any(char::is_whitespace)
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::*;
+
+    #[test]
+    fn code_blocks_and_addresses() {
+        let t = "a\n```\ncode\n```\nb";
+        assert!(!in_code_block(t, 1));
+        assert!(in_code_block(t, t.find("code").unwrap()));
+        assert!(!in_code_block(t, t.len()));
+        assert!(is_web_address("https://example.com/a?b=c"));
+        assert!(!is_web_address("https://example.com and more"));
+        assert!(!is_web_address("example.com"));
     }
 }

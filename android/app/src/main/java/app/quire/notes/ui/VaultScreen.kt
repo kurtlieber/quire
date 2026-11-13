@@ -107,6 +107,11 @@ fun VaultScreen(vm: QuireViewModel) {
     LaunchedEffect(drawer) {
         snapshotFlow { drawer.currentValue }.collect { if (it == DrawerValue.Closed && vm.drawerOpen) vm.drawerOpen = false }
     }
+    // A note menu action from the drawer, such as Rename, runs when the drawer is closed.
+    LaunchedEffect(drawer) {
+        snapshotFlow { vm.afterDrawer != null && drawer.currentValue == DrawerValue.Closed && !drawer.isAnimationRunning }
+            .collect { if (it) vm.runAfterDrawer() }
+    }
     BackHandler(enabled = vm.focus || vm.renaming || vm.drawerOpen || vm.vaultMenu || vm.outlineOpen) { vm.onBack() }
 
     // Insert image opens the photo picker of Android, for images only.
@@ -357,51 +362,56 @@ private fun TabStrip(vm: QuireViewModel) {
 @Composable
 private fun Tab(vm: QuireViewModel, path: String, on: Boolean) {
     val c = LocalQ.current
-    Row(
-        Modifier
-            .height(35.dp)
-            .widthIn(min = 72.dp, max = 190.dp)
-            .then(
-                if (on) Modifier.drawBehind {
-                    val r = 9.dp.toPx()
-                    val sw = 1.dp.toPx()
-                    val w = size.width
-                    val h = size.height
-                    val fill = Path().apply {
-                        moveTo(0f, h)
-                        lineTo(0f, r)
-                        arcTo(Rect(0f, 0f, 2 * r, 2 * r), 180f, 90f, false)
-                        lineTo(w - r, 0f)
-                        arcTo(Rect(w - 2 * r, 0f, w, 2 * r), 270f, 90f, false)
-                        lineTo(w, h)
-                        close()
-                    }
-                    drawPath(fill, c.bg)
-                    val o = sw / 2
-                    val edge = Path().apply {
-                        moveTo(o, h)
-                        lineTo(o, r)
-                        arcTo(Rect(o, o, 2 * r - o, 2 * r - o), 180f, 90f, false)
-                        lineTo(w - r, o)
-                        arcTo(Rect(w - 2 * r + o, o, w - o, 2 * r - o), 270f, 90f, false)
-                        lineTo(w - o, h)
-                    }
-                    drawPath(edge, c.line, style = Stroke(sw))
-                } else Modifier
-            )
-            .tap(RoundedCornerShape(topStart = 9.dp, topEnd = 9.dp), pressed = Color.Transparent) { if (!on) vm.openFile(path) }
-            .padding(start = 14.dp, end = 6.dp, bottom = 1.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Txt(Md.base(path), 13.sp, if (on) c.ink else c.mute, Modifier.weight(1f, fill = false), maxLines = 1)
-        Box(
+    // A long-press opens the note menu under the tab. A tap still opens the tab.
+    var menu by remember(path) { mutableStateOf(false) }
+    Box {
+        Row(
             Modifier
-                .size(24.dp)
-                .alpha(if (on) 1f else 0.55f)
-                .tap(RoundedCornerShape(5.dp)) { vm.closeTab(path) },
-            contentAlignment = Alignment.Center,
-        ) { QIcon(QIcons.CLOSE, 8f, 8.dp, 1.3f, c.mute) }
+                .height(35.dp)
+                .widthIn(min = 72.dp, max = 190.dp)
+                .then(
+                    if (on) Modifier.drawBehind {
+                        val r = 9.dp.toPx()
+                        val sw = 1.dp.toPx()
+                        val w = size.width
+                        val h = size.height
+                        val fill = Path().apply {
+                            moveTo(0f, h)
+                            lineTo(0f, r)
+                            arcTo(Rect(0f, 0f, 2 * r, 2 * r), 180f, 90f, false)
+                            lineTo(w - r, 0f)
+                            arcTo(Rect(w - 2 * r, 0f, w, 2 * r), 270f, 90f, false)
+                            lineTo(w, h)
+                            close()
+                        }
+                        drawPath(fill, c.bg)
+                        val o = sw / 2
+                        val edge = Path().apply {
+                            moveTo(o, h)
+                            lineTo(o, r)
+                            arcTo(Rect(o, o, 2 * r - o, 2 * r - o), 180f, 90f, false)
+                            lineTo(w - r, o)
+                            arcTo(Rect(w - 2 * r + o, o, w - o, 2 * r - o), 270f, 90f, false)
+                            lineTo(w - o, h)
+                        }
+                        drawPath(edge, c.line, style = Stroke(sw))
+                    } else Modifier
+                )
+                .tap(RoundedCornerShape(topStart = 9.dp, topEnd = 9.dp), pressed = Color.Transparent, onLongClick = { menu = true }) { if (!on) vm.openFile(path) }
+                .padding(start = 14.dp, end = 6.dp, bottom = 1.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Txt(Md.base(path), 13.sp, if (on) c.ink else c.mute, Modifier.weight(1f, fill = false), maxLines = 1)
+            Box(
+                Modifier
+                    .size(24.dp)
+                    .alpha(if (on) 1f else 0.55f)
+                    .tap(RoundedCornerShape(5.dp)) { vm.closeTab(path) },
+                contentAlignment = Alignment.Center,
+            ) { QIcon(QIcons.CLOSE, 8f, 8.dp, 1.3f, c.mute) }
+        }
+        if (menu) NoteMenu(vm, path, onTab = true) { menu = false }
     }
 }
 

@@ -25,10 +25,13 @@ The script puts the binary in `~/.local/bin/quire`, the icon in `~/.local/share/
 ### Writing
 
 - Edits the `.md` files of a folder. Saves each note half a second after you stop typing, and on quit.
-- Shows source with live Markdown highlighting, or a rendered preview (`Ctrl+E`).
-- Has a floating formatting toolbar at the top of the note in source mode. It stays in view, and the note scrolls under it. The buttons are bold, italic, strikethrough, heading, link, note link, lists, task, quote, code, image, pin and lock. `Ctrl+B`, `Ctrl+I` and `Ctrl+K` do the same as the first buttons. Turn off Settings, Editor, **Formatting toolbar** to hide it.
+- Shows source with live Markdown highlighting, or a rendered preview (`Ctrl+E`). The preview keeps each line break as you typed it, in paragraphs, quotes and list items.
+- Has a floating formatting toolbar at the bottom of the note in source mode. It stays in view, and the note scrolls under it. The buttons are bold, italic, strikethrough, heading, link, note link, lists, task, quote, code, image, pin and lock. `Ctrl+B`, `Ctrl+I` and `Ctrl+K` do the same as the first buttons. Turn off Settings, Editor, **Formatting toolbar** to hide it.
 - Hides everything but the text in focus mode. Use `Ctrl+.` or the focus button in the title bar.
 - Locks a note with its own password: use the lock button at the end of the toolbar, or "Lock note with a password…" in the command palette. Quire encrypts the note with AES-256-GCM and a key from the password. The file on disk, search, the link index and sync see only the encrypted text. To read the note, enter the password. Each save encrypts the note again. The note locks again when you close its tab or select the lock button. "Remove password" in the command palette saves it as plain text again. If you forget the password, nobody can open the note. `../SYNC.md` describes the format.
+
+- Turns formatted text that you paste into Markdown. A copy from a web page, a document or a mail app keeps its headings, bold, italic, links, lists, quotes, code blocks and tables. A copy with no formatting, such as one from a code editor, pastes as plain text, and so does every paste inside a code block.
+- Makes a link when you paste a web address over selected text: `[text](https://…)`.
 
 ### Images
 

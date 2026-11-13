@@ -1,6 +1,7 @@
 package app.quire.notes.state
 
 import android.app.Application
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
@@ -22,6 +23,7 @@ import androidx.lifecycle.viewModelScope
 import app.quire.notes.BuildConfig
 import app.quire.notes.core.Fmt
 import app.quire.notes.core.Format
+import app.quire.notes.core.Html2Md
 import app.quire.notes.core.ImageSource
 import app.quire.notes.core.Images
 import app.quire.notes.core.Img
@@ -29,6 +31,7 @@ import app.quire.notes.core.Lock
 import app.quire.notes.core.LockKey
 import app.quire.notes.core.Md
 import app.quire.notes.core.Pins
+import app.quire.notes.core.Tabs
 import app.quire.notes.core.Release
 import app.quire.notes.core.Update
 import app.quire.notes.core.Sample
@@ -798,20 +801,24 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         return TextRange(map(v.selection.start), map(v.selection.end))
     }
 
-    fun deleteNote() {
-        val p = active ?: return
+    /** Moves the note [path] to .trash. Without a path, it deletes the active note. */
+    fun deleteNote(path: String? = null) {
+        val p = path ?: active ?: return
+        if (p !in files) return
         unlocked = unlocked - p
         pinned = Pins.remove(pinned, p)
         dirty.remove(p)
-        val i = tabs.indexOf(p)
-        val nt = tabs.filter { it != p }
+        val wasActive = p == active
+        val (nt, na) = Tabs.close(tabs, active, setOf(p))
         setStructure(files - p)
         tabs = nt
         recent = recent.filter { it != p }
-        focus = false
-        val na = if (nt.isEmpty()) null else nt[min(max(i, 0), nt.size - 1)]
-        active = na
-        loadEditor(na, null)
+        if (wasActive) {
+            focus = false
+            renaming = false
+            active = na
+            loadEditor(na, null)
+        }
         disk("delete ${Md.base(p)}") { delete(p) }
         updateCount()
         persistSession()
@@ -838,6 +845,66 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
         if (t.isEmpty() || Md.isImage(t)) return
         val p = Md.resolve(names, t)
         if (p != null) openFile(p) else newNote(t)
+    }
+
+    /** Close other tabs: only [keep] stays open, and it becomes the active note. Closed notes lock again. */
+    fun closeOtherTabs(keep: String) {
+        val (nt, na) = Tabs.closeOthers(tabs, keep)
+        if (na == null) return
+        val gone = tabs.filter { it != keep }.toSet()
+        if (gone.any { it in unlocked }) {
+            flushAll()
+            unlocked = unlocked - gone
+        }
+        tabs = nt
+        if (active != na) {
+            active = na
+            renaming = false
+            loadEditor(na, null)
+        }
+        persistSession()
+    }
+
+    /**
+     * An action that waits until the drawer is closed. A field that opens the keyboard while the
+     * drawer closes stops the drawer animation, and the drawer then stays open.
+     */
+    var afterDrawer by mutableStateOf<(() -> Unit)?>(null); private set
+
+    /** VaultScreen calls this when the drawer is closed. */
+    fun runAfterDrawer() {
+        val a = afterDrawer ?: return
+        afterDrawer = null
+        a()
+    }
+
+    /** Runs [action] on the note [p]. The note opens first, because the action works on the active note. */
+    private fun onNote(p: String, action: () -> Unit) {
+        if (p !in files) return
+        val wait = drawerOpen
+        if (active != p) openFile(p)
+        drawerOpen = false
+        if (wait) afterDrawer = action else action()
+    }
+
+    /** The menu actions that use the flows of the active note. */
+    fun renameNote(p: String) = onNote(p) { startRename() }
+    fun lockNoteAsk(p: String) = onNote(p) { askLock() }
+    fun lockNow(p: String) = onNote(p) { relock() }
+    fun removePasswordOf(p: String) = onNote(p) { removePassword() }
+
+    /** Sends the text of the note with the share sheet. A locked note shares only while it is unlocked. */
+    fun shareNote(p: String) {
+        if (p !in files || noteLocked(p)) return
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, Md.base(p))
+            .putExtra(Intent.EXTRA_TEXT, textOf(p))
+        try {
+            ctx.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            flash("Quire could not open the share sheet.")
+        }
     }
 
     fun startRename() {
@@ -1678,6 +1745,22 @@ class QuireViewModel(app: Application) : AndroidViewModel(app) {
             val t = files[note] ?: return
             setDoc(note, t + Images.linkText(rels, Md.dir(note), t.lastOrNull(), null))
         }
+    }
+
+    /**
+     * The Markdown that a paste into the editor puts in place of the selection, or null for a
+     * plain paste. Formatted HTML from a web page, a mail or a document becomes Markdown. A web
+     * address pasted over text on one line links that text. Inside a code block, a paste stays
+     * plain. Follows paste_content in desktop/src/images.rs.
+     */
+    fun pasteMarkdown(clip: ClipData): String? {
+        val a = active ?: return null
+        if (noteLocked(a) || clip.itemCount == 0) return null
+        val items = (0 until clip.itemCount).map { clip.getItemAt(it) }
+        val html = items.firstNotNullOfOrNull { it.htmlText?.takeIf { h -> h.isNotBlank() } }
+        val plain = items[0].text?.toString() ?: ""
+        val v = editor
+        return Html2Md.pasteText(v.text, v.selection.start, v.selection.end, html, plain)
     }
 
     /** A paste of copied images into the editor links them. False when the clipboard holds text or no image. */
