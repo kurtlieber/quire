@@ -82,6 +82,7 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
             },
             TextInputEvent::Leave { surface } => {
                 text_input_data.surface = None;
+                text_input_data.preedit_shown = false;
 
                 // Always issue a disable.
                 text_input.disable();
@@ -121,32 +122,8 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
                     None => return,
                 };
 
-                // Clear preedit, unless all we'll be doing next is sending a new preedit.
-                if text_input_data.pending_commit.is_some()
-                    || text_input_data.pending_preedit.is_none()
-                {
-                    state.events_sink.push_window_event(
-                        WindowEvent::Ime(Ime::Preedit(String::new(), None)),
-                        window_id,
-                    );
-                }
-
-                // Send `Commit`.
-                if let Some(text) = text_input_data.pending_commit.take() {
-                    state
-                        .events_sink
-                        .push_window_event(WindowEvent::Ime(Ime::Commit(text)), window_id);
-                }
-
-                // Send preedit.
-                if let Some(preedit) = text_input_data.pending_preedit.take() {
-                    let cursor_range =
-                        preedit.cursor_begin.map(|b| (b, preedit.cursor_end.unwrap_or(b)));
-
-                    state.events_sink.push_window_event(
-                        WindowEvent::Ime(Ime::Preedit(preedit.text, cursor_range)),
-                        window_id,
-                    );
+                for ime in text_input_data.take_done() {
+                    state.events_sink.push_window_event(WindowEvent::Ime(ime), window_id);
                 }
             },
             TextInputEvent::DeleteSurroundingText { .. } => {
@@ -188,6 +165,43 @@ pub struct TextInputDataInner {
 
     /// The preedit to submit on `done`.
     pending_preedit: Option<Preedit>,
+
+    /// Whether the last preedit sent to the window had text, so there is one to clear.
+    preedit_shown: bool,
+}
+
+impl TextInputDataInner {
+    /// The `Ime` events a `done` sends, from what the input method set before it.
+    ///
+    /// Quire fork (kurtlieber/quire): an empty preedit goes out only to clear one that shows.
+    /// An input method answers each `commit` with a `done`, and the window commits a new cursor
+    /// rectangle whenever the caret moves on screen, scrolling included. Upstream winit sent an
+    /// empty preedit for every such `done`, and Rune hands it to the focused field as an edit,
+    /// which scrolls the caret back into view: the mouse wheel stopped where the caret would
+    /// leave the screen.
+    fn take_done(&mut self) -> Vec<Ime> {
+        let commit = self.pending_commit.take();
+        let preedit = self.pending_preedit.take().filter(|preedit| !preedit.text.is_empty());
+        let mut events = Vec::new();
+
+        // Clear the preedit, unless all we'll be doing next is sending a new preedit.
+        if self.preedit_shown && (commit.is_some() || preedit.is_none()) {
+            events.push(Ime::Preedit(String::new(), None));
+        }
+
+        if let Some(text) = commit {
+            events.push(Ime::Commit(text));
+        }
+
+        self.preedit_shown = preedit.is_some();
+        if let Some(preedit) = preedit {
+            let cursor_range =
+                preedit.cursor_begin.map(|b| (b, preedit.cursor_end.unwrap_or(b)));
+            events.push(Ime::Preedit(preedit.text, cursor_range));
+        }
+
+        events
+    }
 }
 
 /// The state of the preedit.
@@ -199,3 +213,64 @@ struct Preedit {
 
 delegate_dispatch!(WinitState: [ZwpTextInputManagerV3: GlobalData] => TextInputState);
 delegate_dispatch!(WinitState: [ZwpTextInputV3: TextInputData] => TextInputState);
+
+#[cfg(test)]
+mod tests {
+    use super::{Preedit, TextInputDataInner};
+    use crate::event::Ime;
+
+    fn preedit(data: &mut TextInputDataInner, text: &str) {
+        let end = Some(text.len());
+        data.pending_preedit =
+            Some(Preedit { text: text.into(), cursor_begin: end, cursor_end: end });
+    }
+
+    #[test]
+    fn a_bare_done_sends_nothing_when_no_preedit_shows() {
+        let mut data = TextInputDataInner::default();
+        assert_eq!(data.take_done(), vec![]);
+        preedit(&mut data, "");
+        assert_eq!(data.take_done(), vec![]);
+    }
+
+    #[test]
+    fn a_shown_preedit_is_cleared_once() {
+        let mut data = TextInputDataInner::default();
+        preedit(&mut data, "ni");
+        assert_eq!(data.take_done(), vec![Ime::Preedit("ni".into(), Some((2, 2)))]);
+        assert_eq!(data.take_done(), vec![Ime::Preedit(String::new(), None)]);
+        assert_eq!(data.take_done(), vec![]);
+    }
+
+    #[test]
+    fn an_empty_preedit_clears_a_shown_one() {
+        let mut data = TextInputDataInner::default();
+        preedit(&mut data, "ni");
+        data.take_done();
+        preedit(&mut data, "");
+        assert_eq!(data.take_done(), vec![Ime::Preedit(String::new(), None)]);
+    }
+
+    #[test]
+    fn a_commit_clears_a_shown_preedit_first() {
+        let mut data = TextInputDataInner::default();
+        preedit(&mut data, "ni");
+        data.take_done();
+        data.pending_commit = Some("你".into());
+        assert_eq!(
+            data.take_done(),
+            vec![Ime::Preedit(String::new(), None), Ime::Commit("你".into())]
+        );
+        data.pending_commit = Some("a".into());
+        assert_eq!(data.take_done(), vec![Ime::Commit("a".into())]);
+    }
+
+    #[test]
+    fn a_new_preedit_replaces_the_shown_one_without_a_clear() {
+        let mut data = TextInputDataInner::default();
+        preedit(&mut data, "n");
+        data.take_done();
+        preedit(&mut data, "ni");
+        assert_eq!(data.take_done(), vec![Ime::Preedit("ni".into(), Some((2, 2)))]);
+    }
+}
