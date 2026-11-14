@@ -1,7 +1,12 @@
 //! Markdown analysis shared by the editor, the preview, the panels and the MCP server.
-//! It is a port of the design prototype's logic, so the results match it line for line.
+//! The preview, the outline, tags, backlinks and the rewrite on rename read the tree in `gfm`.
+//! The line-by-line helpers here serve the editor's source mode and come from the design
+//! prototype.
 
 use std::collections::BTreeMap;
+
+mod gfm;
+pub use gfm::{Align, Block, Inline, backlinks, headings, plain, rewrite_links, tags, tree};
 
 /// The file name of a note without its folder and without `.md`.
 pub fn base(p: &str) -> &str {
@@ -230,8 +235,6 @@ pub struct ListLine {
     /// The task box `[ ] ` byte range, with one trailing space.
     pub task: Option<std::ops::Range<usize>>,
     pub done: bool,
-    /// Where the item's text starts.
-    pub text: usize,
     /// The number of an ordered marker and its closing `.` or `)`.
     pub number: Option<(u64, char)>,
 }
@@ -264,7 +267,6 @@ pub fn list_line(ln: &str) -> Option<ListLine> {
     let after = i + sp;
     let mut task = None;
     let mut done = false;
-    let mut text = after;
     if b.get(after) == Some(&b'[') && b.get(after + 2) == Some(&b']') {
         if let Some(&m) = b.get(after + 1) {
             if matches!(m, b' ' | b'x' | b'X') {
@@ -272,169 +274,18 @@ pub fn list_line(ln: &str) -> Option<ListLine> {
                     if c.is_whitespace() {
                         task = Some(after..after + 3 + c.len_utf8());
                         done = m != b' ';
-                        text = after + 3 + c.len_utf8();
                     }
                 }
             }
         }
     }
-    Some(ListLine { indent, marker, after, task, done, text, number })
+    Some(ListLine { indent, marker, after, task, done, number })
 }
 
 /// A fence line opens or closes a code block: `^\s*(```|~~~)`.
 pub fn is_fence(ln: &str) -> bool {
     let t = ln.trim_start();
     t.starts_with("```") || t.starts_with("~~~")
-}
-
-// ---------- Document facts ----------
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Heading {
-    pub level: usize,
-    pub text: String,
-    pub line: usize,
-}
-
-pub fn headings(text: &str) -> Vec<Heading> {
-    let mut out = Vec::new();
-    let mut fence = false;
-    for (i, ln) in text.split('\n').enumerate() {
-        if ln.trim_start().starts_with("```") {
-            fence = !fence;
-            continue;
-        }
-        if fence {
-            continue;
-        }
-        if let Some((h, start)) = heading_line(ln) {
-            let mut t = ln[start..].trim_end();
-            t = t.trim_end_matches('#').trim_end();
-            if t.is_empty() {
-                continue;
-            }
-            let clean = t.replace("**", "").replace("__", "").replace("[[", "").replace("]]", "");
-            let clean: String = clean.chars().filter(|c| !matches!(c, '*' | '_' | '`')).collect();
-            out.push(Heading { level: h, text: clean, line: i });
-        }
-    }
-    out
-}
-
-fn strip_code(t: &str) -> String {
-    // Remove fenced blocks, then inline code spans.
-    let mut out = String::with_capacity(t.len());
-    let mut rest = t;
-    while let Some(a) = rest.find("```") {
-        out.push_str(&rest[..a]);
-        match rest[a + 3..].find("```") {
-            Some(b) => rest = &rest[a + 3 + b + 3..],
-            None => {
-                rest = &rest[a..];
-                break;
-            }
-        }
-    }
-    out.push_str(rest);
-    let mut res = String::with_capacity(out.len());
-    for line in out.split_inclusive('\n') {
-        let mut l = line;
-        loop {
-            let Some(a) = l.find('`') else { break };
-            let Some(b) = l[a + 1..].find('`') else { break };
-            if b == 0 {
-                res.push_str(&l[..a + 1]);
-                l = &l[a + 1..];
-                continue;
-            }
-            res.push_str(&l[..a]);
-            l = &l[a + 1 + b + 1..];
-        }
-        res.push_str(l);
-    }
-    res
-}
-
-/// Every `#tag` in a note, lowercased and once each.
-pub fn note_tags(text: &str) -> Vec<String> {
-    let t = strip_code(text);
-    let mut seen: Vec<String> = Vec::new();
-    let b = t.as_bytes();
-    for (i, c) in t.char_indices() {
-        if c != '#' {
-            continue;
-        }
-        let ok_before = match prev_char(&t, i) {
-            None => true,
-            Some(p) => p.is_whitespace() || p == '(',
-        };
-        if !ok_before || !b.get(i + 1).is_some_and(|x| x.is_ascii_alphabetic()) {
-            continue;
-        }
-        let j = scan(b, i + 2, |x| x.is_ascii_alphanumeric() || x == b'_' || x == b'/' || x == b'-');
-        let tag = t[i + 1..j].to_lowercase();
-        if !seen.contains(&tag) {
-            seen.push(tag);
-        }
-    }
-    seen
-}
-
-/// Tags across all notes with the number of notes using each, most used first.
-pub fn tags(files: &BTreeMap<String, String>) -> Vec<(String, usize)> {
-    let mut m: BTreeMap<String, usize> = BTreeMap::new();
-    for t in files.values() {
-        for tag in note_tags(t) {
-            *m.entry(tag).or_default() += 1;
-        }
-    }
-    let mut v: Vec<(String, usize)> = m.into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    v
-}
-
-/// The `[[...]]` links in a text, as inner text.
-pub fn wiki_links(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    let mut off = 0;
-    while let Some(a) = rest.find("[[") {
-        let after = &rest[a + 2..];
-        let end = after.find(|c| c == ']' || c == '\n');
-        match end {
-            Some(e) if e > 0 && after[e..].starts_with("]]") => {
-                out.push(&text[off + a + 2..off + a + 2 + e]);
-                let adv = a + 2 + e + 2;
-                off += adv;
-                rest = &rest[adv..];
-            }
-            _ => {
-                off += a + 2;
-                rest = &rest[a + 2..];
-            }
-        }
-    }
-    out
-}
-
-/// Notes that link to `active`, with the number of links in each.
-pub fn backlinks(files: &BTreeMap<String, String>, active: &str) -> Vec<(String, usize)> {
-    let b = base(active).to_lowercase();
-    let full = strip_md(active).to_lowercase();
-    let mut out = Vec::new();
-    for (p, t) in files {
-        if p == active {
-            continue;
-        }
-        let n = wiki_links(t).iter().filter(|x| {
-            let t = link_target(x).to_lowercase();
-            t == b || t == full
-        }).count();
-        if n > 0 {
-            out.push((p.clone(), n));
-        }
-    }
-    out
 }
 
 /// Counts words as the prototype does: letter or number runs, fenced code left out.
@@ -628,73 +479,6 @@ pub fn toggle_task(text: &str, line: usize) -> String {
     lines.join("\n")
 }
 
-/// Rewrites `[[old]]` and `[[old|alias]]` links to `new`, case-insensitively.
-pub fn rewrite_links(text: &str, old: &str, new: &str) -> String {
-    let old_l = old.to_lowercase();
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(a) = rest.find("[[") {
-        out.push_str(&rest[..a]);
-        let after = &rest[a + 2..];
-        let Some(e) = after.find("]]") else {
-            out.push_str(&rest[a..]);
-            rest = "";
-            break;
-        };
-        let inner = &after[..e];
-        let (target, alias) = match inner.find('|') {
-            Some(k) => (&inner[..k], &inner[k..]),
-            None => (inner, ""),
-        };
-        if !inner.contains('\n') && target.to_lowercase() == old_l {
-            out.push_str("[[");
-            out.push_str(new);
-            out.push_str(alias);
-            out.push_str("]]");
-        } else {
-            out.push_str("[[");
-            out.push_str(inner);
-            out.push_str("]]");
-        }
-        rest = &after[e + 2..];
-    }
-    out.push_str(rest);
-    out
-}
-
-// ---------- Preview blocks ----------
-
-#[derive(Clone, Debug)]
-pub struct Item {
-    pub indent: usize,
-    pub marker: String,
-    pub task: bool,
-    pub done: bool,
-    pub text: String,
-    pub line: usize,
-}
-
-#[derive(Clone, Debug)]
-pub enum Block {
-    /// A line of nothing but images.
-    Image { line: usize, images: Vec<Img> },
-    Pre { line: usize, text: String },
-    Heading { line: usize, level: usize, index: usize, text: String },
-    Rule,
-    Quote { line: usize, text: String },
-    List { line: usize, items: Vec<Item> },
-    Para { line: usize, text: String },
-}
-
-fn is_list(l: &str) -> bool {
-    list_line(l).is_some()
-}
-
-fn is_block_start(l: &str) -> bool {
-    let t = l.trim_start();
-    t.starts_with("```") || heading_line(l).is_some() || t.starts_with('>') || is_list(l) || is_hr(l) || image_line(l).is_some()
-}
-
 /// The file types the preview shows as images, and that sync carries next to the notes.
 pub const IMAGE_EXT: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"];
 
@@ -710,65 +494,6 @@ pub struct Img {
     pub src: String,
     /// Written as `![[name]]`: `src` is a file name to find anywhere in the folder.
     pub embed: bool,
-}
-
-/// The images of a line that holds only images, with spaces between them.
-pub fn image_line(l: &str) -> Option<Vec<Img>> {
-    let mut rest = l.trim();
-    if !rest.starts_with("![") {
-        return None;
-    }
-    let mut out = Vec::new();
-    while !rest.is_empty() {
-        let (img, used) = image_at(rest)?;
-        out.push(img);
-        rest = rest[used..].trim_start();
-    }
-    Some(out)
-}
-
-/// One image at the start of `s`, and how many bytes it takes.
-pub fn image_at(s: &str) -> Option<(Img, usize)> {
-    if let Some(inner) = s.strip_prefix("![[") {
-        let end = inner.find("]]")?;
-        let name = inner[..end].split('|').next().unwrap_or("").trim();
-        if name.is_empty() || !is_image(name) {
-            return None;
-        }
-        let alt = name.rsplit('/').next().unwrap_or(name);
-        let alt = alt.rsplit_once('.').map_or(alt, |(b, _)| b).to_string();
-        return Some((Img { alt, src: name.to_string(), embed: true }, 3 + end + 2));
-    }
-    let inner = s.strip_prefix("![")?;
-    let close = inner.find("](")?;
-    let alt = &inner[..close];
-    if alt.contains(['[', ']', '\n']) {
-        return None;
-    }
-    let after = &inner[close + 2..];
-    let end = if after.starts_with('<') { after.find(">)").map(|i| i + 1)? } else { after.find(')')? };
-    let src = image_src(&after[..end]);
-    if src.is_empty() {
-        return None;
-    }
-    Some((Img { alt: alt.to_string(), src, embed: false }, 2 + close + 2 + end + 1))
-}
-
-/// The path or URL of `![alt](…)`: without `<…>`, without a `"title"`, with `%20` and the
-/// other escapes decoded for paths.
-pub fn image_src(raw: &str) -> String {
-    let t = raw.trim();
-    if let Some(inner) = t.strip_prefix('<').and_then(|r| r.strip_suffix('>')) {
-        return inner.to_string();
-    }
-    let t = match t.find(" \"") {
-        Some(i) => &t[..i],
-        None => t,
-    };
-    if t.contains("://") {
-        return t.to_string();
-    }
-    percent_decode(t)
 }
 
 fn percent_decode(s: &str) -> String {
@@ -831,112 +556,6 @@ pub fn resolve(dir: &str, rel: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// Splits a note into preview blocks, as the prototype's `renderPreview` does.
-/// The lines of a paragraph, a quote or a list item as the preview shows them: each line on its
-/// own line, as in the source. Spaces around a line go. A `\` or two spaces that end a line mark
-/// a line break in Markdown, and the line breaks anyway, so the mark goes too. A `\` at the end
-/// of the last line stays, as Markdown keeps it.
-fn join_lines(lines: &[&str]) -> String {
-    let n = lines.len();
-    let mut out = String::new();
-    for (i, l) in lines.iter().enumerate() {
-        let mut t = l.trim();
-        if i + 1 < n {
-            if let Some(s) = t.strip_suffix('\\').filter(|s| !s.ends_with('\\')) {
-                t = s.trim_end();
-            }
-        }
-        if i > 0 {
-            out.push('\n');
-        }
-        out.push_str(t);
-    }
-    out
-}
-
-pub fn blocks(text: &str) -> Vec<Block> {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    let mut hi = 0;
-    while i < lines.len() {
-        let ln = lines[i];
-        let start = i;
-        if ln.trim().is_empty() {
-            i += 1;
-            continue;
-        }
-        if ln.trim_start().starts_with("```") {
-            let mut buf = Vec::new();
-            i += 1;
-            while i < lines.len() && !lines[i].trim_start().starts_with("```") {
-                buf.push(lines[i]);
-                i += 1;
-            }
-            i += 1;
-            out.push(Block::Pre { line: start, text: buf.join("\n") });
-            continue;
-        }
-        if let Some((h, s)) = heading_line(ln) {
-            out.push(Block::Heading { line: start, level: h.min(3), index: hi, text: ln[s..].to_string() });
-            hi += 1;
-            i += 1;
-            continue;
-        }
-        if is_hr(ln) {
-            out.push(Block::Rule);
-            i += 1;
-            continue;
-        }
-        if let Some(images) = image_line(ln) {
-            out.push(Block::Image { line: start, images });
-            i += 1;
-            continue;
-        }
-        if ln.trim_start().starts_with('>') {
-            let mut buf = Vec::new();
-            while i < lines.len() && lines[i].trim_start().starts_with('>') {
-                let p = quote_prefix(lines[i]).unwrap_or(0);
-                buf.push(&lines[i][p..]);
-                i += 1;
-            }
-            out.push(Block::Quote { line: start, text: join_lines(&buf) });
-            continue;
-        }
-        if is_list(ln) {
-            let mut items = Vec::new();
-            while i < lines.len() {
-                let Some(l) = list_line(lines[i]) else { break };
-                let raw = lines[i];
-                // A task box needs one or more spaces after it in the preview.
-                let (task, done, text_at) = match &l.task {
-                    Some(_) => (true, l.done, l.text + raw[l.text..].len() - raw[l.text..].trim_start().len()),
-                    None => (false, false, l.after),
-                };
-                let indent = raw[..l.indent].chars().map(|c| if c == '\t' { 2 } else { 1 }).sum();
-                let item_line = i;
-                let mut own = vec![&raw[text_at..]];
-                i += 1;
-                // Lines under an item that start no new block belong to the item, indented or not.
-                while i < lines.len() && !lines[i].trim().is_empty() && !is_block_start(lines[i]) {
-                    own.push(lines[i]);
-                    i += 1;
-                }
-                items.push(Item { indent, marker: raw[l.marker.clone()].to_string(), task, done, text: join_lines(&own), line: item_line });
-            }
-            out.push(Block::List { line: start, items });
-            continue;
-        }
-        let mut buf = Vec::new();
-        while i < lines.len() && !lines[i].trim().is_empty() && (buf.is_empty() || !is_block_start(lines[i])) {
-            buf.push(lines[i]);
-            i += 1;
-        }
-        out.push(Block::Para { line: start, text: join_lines(&buf) });
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -980,29 +599,13 @@ mod tests {
 }
 
 #[cfg(test)]
-mod image_tests {
+mod path_tests {
     use super::*;
 
     #[test]
-    fn image_lines_parse() {
-        let one = image_line("![A cat](attachments/My%20cat.png)").unwrap();
-        assert_eq!(one, vec![Img { alt: "A cat".into(), src: "attachments/My cat.png".into(), embed: false }]);
-        let two = image_line("  ![](a.png \"Title\")  ![[Photos/b.jpg|300]]").unwrap();
-        assert_eq!(two[0].src, "a.png");
-        assert_eq!(two[1], Img { alt: "b".into(), src: "Photos/b.jpg".into(), embed: true });
-        assert_eq!(image_line("![x](<with space.png>)").unwrap()[0].src, "with space.png");
-        assert_eq!(image_line("![x](https://example.com/a%20b.png)").unwrap()[0].src, "https://example.com/a%20b.png");
-        assert!(image_line("text ![x](a.png)").is_none());
-        assert!(image_line("![x](a.png) and text").is_none());
-        assert!(image_line("![[Note]]").is_none(), "an embed of a note is not an image");
+    fn paths_and_escapes() {
         assert_eq!(percent_decode("%E2%9C%93 100%"), "✓ 100%");
         assert_eq!(percent_decode("%é"), "%é");
-    }
-
-    #[test]
-    fn image_blocks_and_paths() {
-        let b = blocks("Text\n![a](a.png)\nmore");
-        assert!(matches!(&b[..], [Block::Para { .. }, Block::Image { .. }, Block::Para { .. }]), "{b:?}");
         assert_eq!(relative("Drafts/Old", "attachments/a.png"), "../../attachments/a.png");
         assert_eq!(relative("", "attachments/a.png"), "attachments/a.png");
         assert_eq!(resolve("Drafts", "../attachments/a.png").as_deref(), Some("attachments/a.png"));
@@ -1010,24 +613,4 @@ mod image_tests {
         assert_eq!(link_path("My cat (1).png"), "My%20cat%20%281%29.png");
         assert!(is_image("x/Y.JPG") && !is_image("x.md"));
     }
-
-    #[test]
-    fn line_breaks_stay() {
-        let b = blocks("one\ntwo  \nthree\\\nfour\\\n\n- a\n  more a\nlazy a\n- b\n\n> q1\n> q2");
-        match &b[..] {
-            [Block::Para { text: p, .. }, Block::List { items, .. }, Block::Quote { text: q, .. }] => {
-                assert_eq!(p, "one\ntwo\nthree\nfour\\");
-                assert_eq!(items.len(), 2);
-                assert_eq!(items[0].text, "a\nmore a\nlazy a");
-                assert_eq!((items[0].line, items[1].line), (5, 8));
-                assert_eq!(items[1].text, "b");
-                assert_eq!(q, "q1\nq2");
-            }
-            other => panic!("{other:?}"),
-        }
-        // A heading, a quote or a new item ends a list item.
-        let b = blocks("- a\n# H\n- b\n> q");
-        assert!(matches!(&b[..], [Block::List { .. }, Block::Heading { .. }, Block::List { .. }, Block::Quote { .. }]), "{b:?}");
-    }
-
 }

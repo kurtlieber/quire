@@ -1,6 +1,6 @@
 [package]
 name = "quire"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 description = "A plain editor for folders of Markdown files."
@@ -13,6 +13,8 @@ path = "src/main.rs"
 rune = { git = "https://github.com/anomalyco/rune", rev = "bf3f9d4a0459af5071cd352df816b610dda7f3a6", default-features = false, features = ["accessibility", "dbus", "svg", "native-file-dialog"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Markdown: GitHub Flavored Markdown, as GitHub parses it (a port of cmark-gfm).
+comrak = { version = "0.59", default-features = false }
 # Sync: HTTPS requests, request signing, and encryption before upload.
 ureq = "2.12"
 sha2 = "0.10"
