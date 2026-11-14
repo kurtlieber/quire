@@ -1,0 +1,143 @@
+# Ships Quire from this fork, which no longer follows bjarneo/quire (Kurt's choice, 2026-11-14,
+# kurtlieber/dotfiles#622; FORK.md, "Releases"). The version in desktop/Cargo.toml is the
+# release. When a merge into main changes desktop/ and that version has no release yet, this tags
+# main as v<version>, builds it with release.yml, and makes it the latest release once every
+# desktop file is attached and the Linux build's `quire --version` names it. Quire's Update
+# button then offers it.
+#
+# A merge that changes desktop/ without a new version fails here, so the change can't sit
+# unreleased unseen: quire-fork-watch in kurtlieber/dotfiles posts failed runs to its
+# "Failure alerts" issue.
+name: Ship
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/ship.yml, .github/release-notes.md, "desktop/**"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Check only: tag and build nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # tag, release
+  actions: write # start release.yml
+
+concurrency:
+  group: ship
+  cancel-in-progress: false
+
+jobs:
+  ship:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      REPO: ${{ github.repository }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The branch's tip, not the pushed commit, when two merges come close together.
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Tag the version
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != true ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::only a dry run may start from $GITHUB_REF"; exit 1
+          fi
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -1)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::desktop/Cargo.toml's version \"$version\" is not X.Y.Z, which Quire's updater compares"; exit 1
+          fi
+          tag="v$version"
+          # This fork always has a latest release, so an error here stops the run rather than
+          # read as "none" and build a release again.
+          mine=$(gh api "repos/$REPO/releases/latest" --jq .tag_name)
+          echo "main is Quire $version; the latest release is $mine"
+
+          if [ "$mine" = "$tag" ]; then
+            if git diff --quiet "$mine" HEAD -- desktop; then
+              echo "nothing to ship: desktop/ has not changed since $mine"
+              echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::error::main has changed desktop/ since $mine, but desktop/Cargo.toml still says $version. Bump the version in a pull request to ship the change (FORK.md, Releases)."
+            exit 1
+          fi
+          # Quire's Update button offers only a newer version.
+          if [ "$(printf '%s\n' "${mine#v}" "$version" | sort -V | tail -1)" != "$version" ]; then
+            echo "::error::$version is older than the latest release $mine, so no Update button would offer it"; exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            if [ "$(git rev-parse "$tag^{commit}")" != "$(git rev-parse HEAD)" ] && ! git diff --quiet "$tag" HEAD -- desktop; then
+              echo "::error::$tag is tagged on an older commit, and main has changed desktop/ since. Bump the version (FORK.md, Releases)."
+              exit 1
+            fi
+            echo "$tag is tagged but not the latest release: build it again"
+            if [ "$DRY_RUN" = true ]; then echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0; fi
+          else
+            git log --oneline -3
+            if [ "$DRY_RUN" = true ]; then
+              echo "dry run: would tag $tag"
+              echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            git tag "$tag"
+            git push -q origin "refs/tags/$tag"
+          fi
+          { echo "tag=$tag"; echo "prev=$mine"; echo "ship=build"; } >> "$GITHUB_OUTPUT"
+
+      - name: Build the release and make it the latest
+        if: steps.tag.outputs.ship == 'build'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          PREV: ${{ steps.tag.outputs.prev }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          # Not the latest until the files are attached, so no Update button points at a
+          # release that has nothing to download yet.
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            notes=$(mktemp)
+            cat .github/release-notes.md > "$notes"
+            if [ -n "$PREV" ]; then
+              printf '\nChanges since %s: https://github.com/%s/compare/%s...%s\n' "$PREV" "$REPO" "$PREV" "$TAG" >> "$notes"
+            fi
+            gh release create "$TAG" --verify-tag --latest=false --title "Quire $v" --notes-file "$notes"
+          fi
+          since=$(date -u -d '-30 sec' +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run release.yml --ref main -f tag="$TAG"
+          run=""
+          for _ in $(seq 30); do
+            sleep 10
+            run=$(gh run list --workflow release.yml --event workflow_dispatch --limit 5 \
+              --json databaseId,createdAt --jq "map(select(.createdAt >= \"$since\"))[0].databaseId // empty")
+            [ -n "$run" ] && break
+          done
+          [ -n "$run" ] || { echo "::error::release.yml did not start"; exit 1; }
+          echo "release.yml run $run"
+          while [ "$(gh run view "$run" --json status --jq .status)" != completed ]; do sleep 60; done
+          if [ "$(gh run view "$run" --json conclusion --jq .conclusion)" != success ]; then
+            echo "::error::release.yml run $run failed; run this workflow again to build $TAG again"; exit 1
+          fi
+          have=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for a in "quire-$v-linux-x86_64.tar.gz" "quire-$v-macos-arm64.zip" "quire-$v-windows-x86_64.zip"; do
+            grep -qxF "$a" <<< "$have" || { echo "::error::$TAG has no $a"; exit 1; }
+          done
+          # Quire compares the release's version with its own, so a build that calls itself
+          # anything else would offer the same update forever.
+          dl=$(mktemp -d)
+          gh release download "$TAG" -p "quire-$v-linux-x86_64.tar.gz" -D "$dl"
+          tar -xzf "$dl/quire-$v-linux-x86_64.tar.gz" -C "$dl"
+          says=$("$dl/quire-$v-linux-x86_64/quire" --version)
+          if [ "$says" != "quire $v" ]; then
+            echo "::error::the Linux build of $TAG says \"$says\", not \"quire $v\""; exit 1
+          fi
+          gh release edit "$TAG" --latest
+          echo "$TAG is the latest release"
