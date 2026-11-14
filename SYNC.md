@@ -1,8 +1,12 @@
-# Quire sync format
+# Typo sync format
 
-Quire keeps a notes folder the same on every device through an object store that you own. The
+Typo keeps a notes folder the same on every device through an object store that you own. The
 desktop app and the Android app use the format in this file. A third app that follows it can
 read and write the same notes.
+
+The format is Quire's, unchanged: Typo was Quire until 2.0.0. The names in it, such as `.quire/`,
+`QUIRE1`, `%QUIRE-LOCKED-NOTE` and the default prefix `quire/`, keep Quire's name, so a folder that
+Quire synced syncs on in Typo.
 
 The reference code is in `desktop/src/sync/`. The tests in `desktop/src/sync/tests.rs` run two
 devices against one bucket.
@@ -102,7 +106,7 @@ both sides had. Its JSON form is:
 `pins` lists the pins after the last sync. A base without `pins` comes from before pins synced.
 `stamps` is optional. It holds the size, the file time in nanoseconds and the hash of each
 image, so an image that did not change is not read again. The desktop app keeps the base in
-`sync/` in its config folder, which is `~/.config/quire/sync/` on Linux. The base never goes to
+`sync/` in its config folder, which is `~/.config/typo/sync/` on Linux. The base never goes to
 the store.
 
 For each path in the local folder, the manifest or the base, compare the local hash `L`, the
@@ -248,19 +252,21 @@ A note can have its own password, apart from the sync passphrase. A locked note 
 ```text
 %QUIRE-LOCKED-NOTE v1 pbkdf2-sha256 <iterations> <salt, standard base64>
 
-This note is locked with a password. Open it in Quire to read it.
+This note is locked with a password. Open it in Typo to read it.
 
 <the sealed text, standard base64, in lines of 76 characters>
 ```
 
 1. Derive 64 bytes with PBKDF2-HMAC-SHA256 from the password as UTF-8, the salt and the
-   iteration count in the first line. Quire uses 16 random bytes of salt and 600000 iterations.
+   iteration count in the first line. Typo uses 16 random bytes of salt and 600000 iterations.
 2. Use bytes 0 to 31 as the AES-256-GCM key.
 3. The sealed text is a sealed blob, as in "Encryption": `QUIRE1`, a 12-byte nonce, then the
    ciphertext of the note text as UTF-8 with its tag.
 
-To read the body, join every line after the notice line, without line breaks. Each save makes a
-new nonce and keeps the salt, so the file changes even when the text does not. A note whose first
+The notice line is for other apps, and its wording can change: Quire wrote "Open it in Quire".
+To read the body, skip the first line, the blank lines and the notice line (the only line with
+spaces), and join the rest without line breaks. Each save makes a new nonce and keeps the salt,
+so the file changes even when the text does not. A note whose first
 line starts with `%QUIRE-LOCKED-NOTE` and has a version other than `v1` must stay locked.
 
 An app keeps the plain text of a locked note in memory only. Search, the link index and the tag
@@ -289,7 +295,7 @@ comes from `cargo test print_locked_note -- --nocapture`:
 ```text
 %QUIRE-LOCKED-NOTE v1 pbkdf2-sha256 1000 MDEyMzQ1Njc4OWFiY2RlZg==
 
-This note is locked with a password. Open it in Quire to read it.
+This note is locked with a password. Open it in Typo to read it.
 
 UVVJUkUxuYsECSutmGY8MVrT44GXP+mqVNaRrkyLtnVcXqlJUQ/+AdtwaCyZUuSDFLdqVw==
 ```

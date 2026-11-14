@@ -1,7 +1,7 @@
-//! Updates. Quire asks GitHub for the latest release and shows an Update button in the title
+//! Updates. Typo asks GitHub for the latest release and shows an Update button in the title
 //! bar when that release is newer. A press downloads the release file for this system, unpacks
 //! it, runs the new binary once to check it, puts it in place of the running app and starts it
-//! again. Linux, macOS and Windows do this. On another system, or when Quire cannot write to its
+//! again. Linux, macOS and Windows do this. On another system, or when Typo cannot write to its
 //! own folder, the button opens the release page.
 
 use std::io::Read;
@@ -14,9 +14,9 @@ use rune::Tx;
 use crate::app::App;
 use crate::sync::app::Job;
 
-const API: &str = "https://api.github.com/repos/kurtlieber/quire/releases/latest";
-const DOWNLOADS: &str = "https://github.com/kurtlieber/quire/releases/download/";
-pub const PAGE: &str = "https://github.com/kurtlieber/quire/releases/latest";
+const API: &str = "https://api.github.com/repos/kurtlieber/typo/releases/latest";
+const DOWNLOADS: &str = "https://github.com/kurtlieber/typo/releases/download/";
+pub const PAGE: &str = "https://github.com/kurtlieber/typo/releases/latest";
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// The time from one automatic check to the next, in seconds.
 const EVERY: f64 = 6.0 * 3600.0;
@@ -69,11 +69,11 @@ pub fn newer(latest: &str, current: &str) -> bool {
 /// The release file for this system.
 pub fn asset_name(version: &str) -> Option<String> {
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        Some(format!("quire-{version}-linux-x86_64.tar.gz"))
+        Some(format!("typo-{version}-linux-x86_64.tar.gz"))
     } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        Some(format!("quire-{version}-macos-arm64.zip"))
+        Some(format!("typo-{version}-macos-arm64.zip"))
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        Some(format!("quire-{version}-windows-x86_64.zip"))
+        Some(format!("typo-{version}-windows-x86_64.zip"))
     } else {
         None
     }
@@ -99,7 +99,7 @@ pub fn parse_release(json: &str, asset: impl Fn(&str) -> Option<String>) -> Resu
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(60)).user_agent("quire-updater").build()
+    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(60)).user_agent("typo-updater").build()
 }
 
 /// Asks GitHub for the latest release.
@@ -114,7 +114,7 @@ fn download(url: &str, to: &Path) -> Result<(), String> {
     let mut bytes = Vec::new();
     // A release file is about 20 MB. 300 MB is far past any real one.
     r.into_reader().take(300 << 20).read_to_end(&mut bytes).map_err(|e| format!("The download stopped: {e}"))?;
-    std::fs::write(to, bytes).map_err(|e| format!("Quire could not save the download: {e}"))
+    std::fs::write(to, bytes).map_err(|e| format!("Typo could not save the download: {e}"))
 }
 
 fn run(cmd: &mut Command) -> Result<(), String> {
@@ -125,7 +125,7 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 /// Runs the new binary once. A file that is cut short or for another system does not run.
 fn check_binary(exe: &Path) -> Result<(), String> {
     let out = Command::new(exe).arg("--help").output().map_err(|e| format!("The new version did not start: {e}"))?;
-    if out.status.success() && String::from_utf8_lossy(&out.stdout).starts_with("Quire") {
+    if out.status.success() && String::from_utf8_lossy(&out.stdout).starts_with("Typo") {
         Ok(())
     } else {
         Err("The new version did not start.".into())
@@ -134,7 +134,7 @@ fn check_binary(exe: &Path) -> Result<(), String> {
 
 /// The running binary. Linux adds " (deleted)" when the file was replaced since the start.
 pub fn current_exe() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("Quire could not find its own file: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("Typo could not find its own file: {e}"))?;
     let s = exe.to_string_lossy();
     Ok(match s.strip_suffix(" (deleted)") {
         Some(t) => PathBuf::from(t),
@@ -148,15 +148,15 @@ fn is_dev_build(exe: &Path) -> bool {
     parts.windows(2).any(|w| w[0] == "target" && (w[1] == "release" || w[1] == "debug"))
 }
 
-/// The `.app` bundle around a macOS binary: `Quire.app/Contents/MacOS/quire`.
+/// The `.app` bundle around a macOS binary: `Typo.app/Contents/MacOS/typo`.
 pub fn bundle_of(exe: &Path) -> Option<PathBuf> {
     let b = exe.parent()?.parent()?.parent()?;
     (b.extension().is_some_and(|e| e == "app") && exe.parent()?.file_name()? == "MacOS").then(|| b.to_path_buf())
 }
 
-/// Whether Quire can make files in `dir`.
+/// Whether Typo can make files in `dir`.
 fn writable(dir: &Path) -> bool {
-    let probe = dir.join(format!(".quire-write-{}", std::process::id()));
+    let probe = dir.join(format!(".typo-write-{}", std::process::id()));
     let ok = std::fs::write(&probe, b"").is_ok();
     let _ = std::fs::remove_file(&probe);
     ok
@@ -178,77 +178,77 @@ impl Restart {
     }
 }
 
-/// The place Quire can update: the binary, or the bundle on macOS. Err when Quire cannot
+/// The place Typo can update: the binary, or the bundle on macOS. Err when Typo cannot
 /// replace itself there.
 fn target() -> Result<PathBuf, String> {
     let exe = current_exe()?;
     if is_dev_build(&exe) {
-        return Err("This copy of Quire runs from a build folder.".into());
+        return Err("This copy of Typo runs from a build folder.".into());
     }
-    let place = if cfg!(target_os = "macos") { bundle_of(&exe).ok_or("Quire is not in an app bundle.")? } else { exe };
-    let dir = place.parent().ok_or("Quire is in no folder.")?;
+    let place = if cfg!(target_os = "macos") { bundle_of(&exe).ok_or("Typo is not in an app bundle.")? } else { exe };
+    let dir = place.parent().ok_or("Typo is in no folder.")?;
     if !writable(dir) {
-        return Err(format!("Quire cannot write to {}.", dir.display()));
+        return Err(format!("Typo cannot write to {}.", dir.display()));
     }
     Ok(place)
 }
 
 /// Downloads `url` and puts the new version in place of `place`.
 pub fn apply_to(place: &Path, url: &str) -> Result<Restart, String> {
-    let dir = place.parent().ok_or("Quire is in no folder.")?;
+    let dir = place.parent().ok_or("Typo is in no folder.")?;
     // The work folder is next to the app, so a rename moves the new version in place.
-    let work = dir.join(format!(".quire-update-{}", std::process::id()));
+    let work = dir.join(format!(".typo-update-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
-    std::fs::create_dir_all(&work).map_err(|e| format!("Quire could not make {}: {e}", work.display()))?;
+    std::fs::create_dir_all(&work).map_err(|e| format!("Typo could not make {}: {e}", work.display()))?;
     let r = apply_in(place, url, &work);
     let _ = std::fs::remove_dir_all(&work);
     r
 }
 
 fn apply_in(place: &Path, url: &str, work: &Path) -> Result<Restart, String> {
-    let file = work.join(url.rsplit('/').next().unwrap_or("quire-update"));
+    let file = work.join(url.rsplit('/').next().unwrap_or("typo-update"));
     download(url, &file)?;
     let out = work.join("x");
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     if cfg!(target_os = "macos") {
         run(Command::new("ditto").arg("-x").arg("-k").arg(&file).arg(&out))?;
-        let new = out.join("Quire.app");
-        check_binary(&new.join("Contents/MacOS/quire"))?;
-        let old = work.join("Quire-old.app");
-        std::fs::rename(place, &old).map_err(|e| format!("Quire could not move the old version: {e}"))?;
+        let new = out.join("Typo.app");
+        check_binary(&new.join("Contents/MacOS/typo"))?;
+        let old = work.join("Typo-old.app");
+        std::fs::rename(place, &old).map_err(|e| format!("Typo could not move the old version: {e}"))?;
         if let Err(e) = std::fs::rename(&new, place) {
             let _ = std::fs::rename(&old, place);
-            return Err(format!("Quire could not put the new version in place: {e}"));
+            return Err(format!("Typo could not put the new version in place: {e}"));
         }
         return Ok(Restart::App(place.to_path_buf()));
     }
     // Linux: a .tar.gz. Windows 10 and later has tar.exe, which also unpacks a .zip.
     run(Command::new("tar").arg("-xf").arg(&file).arg("-C").arg(&out))?;
-    let name = if cfg!(windows) { "quire.exe" } else { "quire" };
+    let name = if cfg!(windows) { "typo.exe" } else { "typo" };
     let new = std::fs::read_dir(&out)
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .map(|e| e.path().join(name))
         .find(|p| p.is_file())
-        .ok_or("The download has no Quire binary.")?;
+        .ok_or("The download has no Typo binary.")?;
     check_binary(&new)?;
     if cfg!(windows) {
         // Windows does not let a running binary be replaced, but it can be renamed.
         let old = place.with_extension("exe.old");
         let _ = std::fs::remove_file(&old);
-        std::fs::rename(place, &old).map_err(|e| format!("Quire could not move the old version: {e}"))?;
+        std::fs::rename(place, &old).map_err(|e| format!("Typo could not move the old version: {e}"))?;
         if let Err(e) = std::fs::rename(&new, place) {
             let _ = std::fs::rename(&old, place);
-            return Err(format!("Quire could not put the new version in place: {e}"));
+            return Err(format!("Typo could not put the new version in place: {e}"));
         }
     } else {
-        // A rename over the running binary is safe on Linux: the old file stays until Quire quits.
+        // A rename over the running binary is safe on Linux: the old file stays until Typo quits.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755));
         }
-        std::fs::rename(&new, place).map_err(|e| format!("Quire could not put the new version in place: {e}"))?;
+        std::fs::rename(&new, place).map_err(|e| format!("Typo could not put the new version in place: {e}"))?;
     }
     Ok(Restart::Exe(place.to_path_buf()))
 }
@@ -283,10 +283,10 @@ impl App {
             (Some(url), Ok(place)) => (url, place),
             (_, why) => {
                 if let Err(e) = why {
-                    eprintln!("quire: update: {e}");
+                    eprintln!("typo: update: {e}");
                 }
                 if let Err(e) = tx.open_url(PAGE) {
-                    self.notice = Some(format!("Quire could not open the release page: {e}"));
+                    self.notice = Some(format!("Typo could not open the release page: {e}"));
                 }
                 return;
             }
@@ -302,11 +302,11 @@ impl App {
             let manual = std::mem::take(&mut self.update.manual);
             match r {
                 Ok(rel) if newer(&rel.version, CURRENT) => {
-                    self.update.message = manual.then(|| format!("Quire {} is out. Select Update at the top right.", rel.version));
+                    self.update.message = manual.then(|| format!("Typo {} is out. Select Update at the top right.", rel.version));
                     self.update.available = Some(rel);
                 }
                 Ok(_) => {
-                    self.update.message = manual.then(|| format!("Quire {CURRENT} is the latest version."));
+                    self.update.message = manual.then(|| format!("Typo {CURRENT} is the latest version."));
                     self.update.available = None;
                 }
                 Err(e) => {
@@ -323,11 +323,11 @@ impl App {
                     self.flush_all();
                     match restart.spawn() {
                         Ok(()) => tx.close_window(),
-                        Err(e) => self.notice = Some(format!("Quire is updated. Start it again to use the new version. ({e})")),
+                        Err(e) => self.notice = Some(format!("Typo is updated. Start it again to use the new version. ({e})")),
                     }
                 }
                 Err(e) => {
-                    self.notice = Some(format!("Quire could not update: {e}"));
+                    self.notice = Some(format!("Typo could not update: {e}"));
                 }
             }
             changed = true;
@@ -351,8 +351,8 @@ mod tests {
     use super::*;
 
     const JSON: &str = r#"{"tag_name":"v0.6.0","draft":false,"assets":[
-        {"name":"quire-0.6.0-linux-x86_64.tar.gz","browser_download_url":"https://github.com/kurtlieber/quire/releases/download/v0.6.0/quire-0.6.0-linux-x86_64.tar.gz"},
-        {"name":"quire-0.6.0-macos-arm64.zip","browser_download_url":"https://example.com/quire-0.6.0-macos-arm64.zip"}]}"#;
+        {"name":"typo-0.6.0-linux-x86_64.tar.gz","browser_download_url":"https://github.com/kurtlieber/typo/releases/download/v0.6.0/typo-0.6.0-linux-x86_64.tar.gz"},
+        {"name":"typo-0.6.0-macos-arm64.zip","browser_download_url":"https://example.com/typo-0.6.0-macos-arm64.zip"}]}"#;
 
     #[test]
     fn versions() {
@@ -369,12 +369,12 @@ mod tests {
 
     #[test]
     fn release_answer() {
-        let linux = parse_release(JSON, |v| Some(format!("quire-{v}-linux-x86_64.tar.gz"))).unwrap();
+        let linux = parse_release(JSON, |v| Some(format!("typo-{v}-linux-x86_64.tar.gz"))).unwrap();
         assert_eq!(linux.version, "0.6.0");
         assert!(linux.url.unwrap().starts_with(DOWNLOADS));
         // A file from another host does not count.
-        assert_eq!(parse_release(JSON, |v| Some(format!("quire-{v}-macos-arm64.zip"))).unwrap().url, None);
-        assert_eq!(parse_release(JSON, |v| Some(format!("quire-{v}-windows-x86_64.zip"))).unwrap().url, None);
+        assert_eq!(parse_release(JSON, |v| Some(format!("typo-{v}-macos-arm64.zip"))).unwrap().url, None);
+        assert_eq!(parse_release(JSON, |v| Some(format!("typo-{v}-windows-x86_64.zip"))).unwrap().url, None);
         assert_eq!(parse_release(JSON, |_| None).unwrap().url, None);
         assert!(parse_release(r#"{"tag_name":"nightly"}"#, |_| None).is_err());
         assert!(parse_release("<html>", |_| None).is_err());
@@ -382,10 +382,10 @@ mod tests {
 
     #[test]
     fn places() {
-        assert_eq!(bundle_of(Path::new("/Applications/Quire.app/Contents/MacOS/quire")), Some(PathBuf::from("/Applications/Quire.app")));
-        assert_eq!(bundle_of(Path::new("/usr/local/bin/quire")), None);
-        assert!(is_dev_build(Path::new("/home/a/quire/desktop/target/release/quire")));
-        assert!(!is_dev_build(Path::new("/home/a/.local/bin/quire")));
+        assert_eq!(bundle_of(Path::new("/Applications/Typo.app/Contents/MacOS/typo")), Some(PathBuf::from("/Applications/Typo.app")));
+        assert_eq!(bundle_of(Path::new("/usr/local/bin/typo")), None);
+        assert!(is_dev_build(Path::new("/home/a/typo/desktop/target/release/typo")));
+        assert!(!is_dev_build(Path::new("/home/a/.local/bin/typo")));
     }
 
     /// Downloads the latest Linux release and puts it in place of a copy of this binary in a
@@ -397,9 +397,9 @@ mod tests {
     fn live_update() {
         let rel = latest().expect("latest release");
         let url = rel.url.expect("a Linux file");
-        let dir = std::env::temp_dir().join(format!("quire-live-update-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-live-update-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let exe = dir.join("quire");
+        let exe = dir.join("typo");
         std::fs::write(&exe, b"#!/bin/sh\necho old\n").unwrap();
         match apply_to(&exe, &url).expect("apply") {
             Restart::Exe(p) => assert_eq!(p, exe),

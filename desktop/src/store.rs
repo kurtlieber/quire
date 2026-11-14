@@ -1,4 +1,4 @@
-//! What Quire keeps between runs: settings, known folders and each folder's open tabs.
+//! What Typo keeps between runs: settings, known folders and each folder's open tabs.
 //! It lives in the user's config folder as `state.json`, never inside a notes folder.
 
 use std::collections::BTreeMap;
@@ -181,7 +181,7 @@ pub struct Session {
 #[serde(default)]
 pub struct Persist {
     pub vaults: Vec<VaultRef>,
-    /// The folder open when Quire quit. None opens the welcome screen.
+    /// The folder open when Typo quit. None opens the welcome screen.
     pub last: Option<PathBuf>,
     pub sessions: BTreeMap<String, Session>,
     pub mode: String,
@@ -213,11 +213,40 @@ impl Default for Persist {
 }
 
 pub fn dirs() -> Option<rune::dirs::AppDirs> {
-    rune::dirs::AppDirs::new("quire")
+    rune::dirs::AppDirs::new("typo")
+}
+
+/// Typo was Quire until 2.0.0. On the first start after the rename, Quire's folders become
+/// Typo's: the settings and sync keys (config) and the sample notes (data). A folder Typo
+/// already has stays as it is.
+pub fn move_from_quire() {
+    // TYPO_STATE marks an isolated run, which must leave the real folders alone.
+    if std::env::var_os("TYPO_STATE").is_some() {
+        return;
+    }
+    if let Some(d) = dirs() {
+        move_dirs(&d);
+    }
+}
+
+fn move_dirs(new: &rune::dirs::AppDirs) {
+    let old = new.sibling("quire");
+    // On macOS and Windows config and data are one folder, so the second move finds nothing.
+    for (from, to) in [(old.config(), new.config()), (old.data(), new.data())] {
+        if from == to || !from.is_dir() || to.exists() {
+            continue;
+        }
+        if let Some(p) = to.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        if let Err(e) = std::fs::rename(from, to) {
+            eprintln!("typo: could not move {} to {}: {e}", from.display(), to.display());
+        }
+    }
 }
 
 fn state_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("QUIRE_STATE") {
+    if let Ok(p) = std::env::var("TYPO_STATE") {
         return Some(PathBuf::from(p));
     }
     dirs().map(|d| d.config().join("state.json"))
@@ -271,5 +300,36 @@ pub fn tilde(p: &std::path::Path) -> String {
             if rest.as_os_str().is_empty() { "~".into() } else { format!("~/{}", rest.to_string_lossy()) }
         }
         _ => p.to_string_lossy().into_owned(),
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::move_dirs;
+    use rune::dirs::AppDirs;
+
+    #[test]
+    fn quire_folders_become_typo_folders_once() {
+        let root = std::env::temp_dir().join(format!("typo-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let new = AppDirs::rooted(&root, "typo");
+        let old = new.sibling("quire");
+        std::fs::create_dir_all(old.config().join("sync")).unwrap();
+        std::fs::write(old.config().join("state.json"), "{}").unwrap();
+        std::fs::create_dir_all(old.data().join("Field Notes")).unwrap();
+
+        move_dirs(&new);
+        assert!(new.config().join("state.json").is_file());
+        assert!(new.config().join("sync").is_dir());
+        assert!(new.data().join("Field Notes").is_dir());
+        assert!(!old.config().exists() && !old.data().exists());
+
+        // A Quire folder that turns up later doesn't replace Typo's.
+        std::fs::create_dir_all(old.config()).unwrap();
+        std::fs::write(old.config().join("state.json"), "old").unwrap();
+        move_dirs(&new);
+        assert_eq!(std::fs::read_to_string(new.config().join("state.json")).unwrap(), "{}");
+        assert!(old.config().join("state.json").is_file());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

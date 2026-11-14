@@ -455,7 +455,7 @@ fn updates(v: V) -> El {
     let p = v.p;
     let s = v.s;
     let on = s.settings().check_updates;
-    let mut desc = format!("This is version {}. Quire asks GitHub for a new release when it starts and every 6 hours, and shows Update at the top right.", crate::update::CURRENT);
+    let mut desc = format!("This is version {}. Typo asks GitHub for a new release when it starts and every 6 hours, and shows Update at the top right.", crate::update::CURRENT);
     if let Some(m) = &s.update.message {
         desc = format!("{desc} {m}");
     }

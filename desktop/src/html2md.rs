@@ -1,5 +1,5 @@
 //! Pasted HTML to Markdown. A copy from a web page, a document or a mail app carries HTML next
-//! to its plain text. Quire turns that HTML into Markdown, so headings, lists, links and
+//! to its plain text. Typo turns that HTML into Markdown, so headings, lists, links and
 //! emphasis stay. HTML with no formatting, such as a copy from a code editor that only colours
 //! its text, stays plain text.
 

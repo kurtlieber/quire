@@ -124,7 +124,7 @@ impl Writer {
         let failed: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
         let failed2 = failed.clone();
         std::thread::Builder::new()
-            .name("quire-writer".into())
+            .name("typo-writer".into())
             .spawn(move || {
                 while let Ok(op) = rx.recv() {
                     if let Op::Barrier(done) = &op {
@@ -138,7 +138,7 @@ impl Writer {
                             write_atomic(path, bytes)
                         };
                         if let Err(e) = r {
-                            eprintln!("quire: could not save the sync record: {e}");
+                            eprintln!("typo: could not save the sync record: {e}");
                         }
                         continue;
                     }
@@ -206,7 +206,7 @@ fn apply(op: &Op) -> std::io::Result<()> {
             if let Some(d) = p.parent() {
                 std::fs::create_dir_all(d)?;
             }
-            let tmp = p.with_file_name(format!(".{}.quire-tmp", p.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())));
+            let tmp = p.with_file_name(format!(".{}.typo-tmp", p.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())));
             std::fs::write(&tmp, text)?;
             std::fs::rename(&tmp, &p)
         }
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn a_deleted_folder_moves_to_the_trash_with_its_files() {
-        let root = std::env::temp_dir().join(format!("quire-delfolder-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("typo-delfolder-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for p in ["Drafts/Old/A.md", "Drafts/Old/img.png"] {
             std::fs::create_dir_all(root.join(p).parent().unwrap()).unwrap();

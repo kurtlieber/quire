@@ -52,10 +52,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           V="${TAG#v}"
-          D="quire-$V-linux-x86_64"
+          D="typo-$V-linux-x86_64"
           mkdir -p "$D/icons"
-          cp target/release/quire packaging/quire.desktop packaging/linux/install.sh "$D/"
-          cp packaging/quire.svg packaging/quire-16.svg "$D/icons/"
+          cp target/release/typo packaging/typo.desktop packaging/linux/install.sh "$D/"
+          cp packaging/typo.svg packaging/typo-16.svg "$D/icons/"
           cp ../LICENSE "$D/"
           tar czf "../$D.tar.gz" "$D"
           echo "ASSET=$D.tar.gz" >> "$GITHUB_ENV"
@@ -64,23 +64,23 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           V="${TAG#v}"
-          A=Quire.app
+          A=Typo.app
           mkdir -p "$A/Contents/MacOS" "$A/Contents/Resources"
-          cp target/release/quire "$A/Contents/MacOS/quire"
-          iconutil -c icns packaging/macos/quire.iconset -o "$A/Contents/Resources/quire.icns"
+          cp target/release/typo "$A/Contents/MacOS/typo"
+          iconutil -c icns packaging/macos/typo.iconset -o "$A/Contents/Resources/typo.icns"
           sed "s/@VERSION@/$V/g" packaging/macos/Info.plist > "$A/Contents/Info.plist"
           # An ad-hoc signature, so the app runs on Apple silicon. It is not notarized.
           codesign --force --deep --sign - "$A"
-          ditto -c -k --keepParent "$A" "../quire-$V-macos-arm64.zip"
-          echo "ASSET=quire-$V-macos-arm64.zip" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent "$A" "../typo-$V-macos-arm64.zip"
+          echo "ASSET=typo-$V-macos-arm64.zip" >> "$GITHUB_ENV"
 
       - name: Pack for Windows
         if: runner.os == 'Windows'
         run: |
           V="${TAG#v}"
-          D="quire-$V-windows-x86_64"
+          D="typo-$V-windows-x86_64"
           mkdir -p "$D"
-          cp target/release/quire.exe "$D/"
+          cp target/release/typo.exe "$D/"
           cp ../LICENSE "$D/LICENSE.txt"
           7z a "../$D.zip" "$D" > /dev/null
           echo "ASSET=$D.zip" >> "$GITHUB_ENV"
@@ -90,6 +90,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" > /dev/null 2>&1 \
-            || gh release create "$TAG" --title "Quire ${TAG#v}" --notes-file ../.github/release-notes.md --verify-tag \
+            || gh release create "$TAG" --title "Typo ${TAG#v}" --notes-file ../.github/release-notes.md --verify-tag \
             || true
           gh release upload "$TAG" "../$ASSET" --clobber

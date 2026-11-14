@@ -64,11 +64,11 @@ fn bar(v: V) -> El {
         .child(el().w(v.trailing))
 }
 
-/// The Update button: a newer release is out. A press installs it and restarts Quire.
+/// The Update button: a newer release is out. A press installs it and restarts Typo.
 fn update_button(v: V, version: &str) -> El {
     let p = v.p;
     let busy = v.s.update.applying();
-    let help = format!("Quire {version} is out. Select to update.");
+    let help = format!("Typo {version} is out. Select to update.");
     let mut b = row()
         .key("update")
         .h(24.0)

@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=Quire
+Name=Typo
 GenericName=Markdown Editor
 Comment=A plain editor for folders of Markdown files
-Exec=quire %F
-Icon=quire
+Exec=typo %F
+Icon=typo
 Terminal=false
 Categories=Office;TextEditor;Utility;
 MimeType=inode/directory;text/markdown;
-StartupWMClass=quire
+StartupWMClass=typo
 Keywords=markdown;notes;editor;wiki;

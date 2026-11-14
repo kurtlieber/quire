@@ -1,4 +1,4 @@
-//! The Markdown that Quire reads: GitHub Flavored Markdown, parsed by comrak, plus the Obsidian
+//! The Markdown that Typo reads: GitHub Flavored Markdown, parsed by comrak, plus the Obsidian
 //! syntax that notes use: front matter, `[[note|alias]]`, `![[embed]]` and `#tags`. Line breaks
 //! stay as typed, and only `~~` strikes, as in Obsidian.
 //!

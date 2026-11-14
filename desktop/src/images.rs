@@ -88,7 +88,7 @@ impl Images {
         let Some(cache) = self.cache.clone() else { return Remote::Failed("No image cache.".into()) };
         map.insert(url.to_string(), Remote::Loading);
         let (slot, waker, url2) = (self.remote.clone(), self.waker.clone(), url.to_string());
-        let _ = std::thread::Builder::new().name("quire-image".into()).spawn(move || {
+        let _ = std::thread::Builder::new().name("typo-image".into()).spawn(move || {
             let got = fetch(&url2).map(|bytes| cache.load(bytes));
             let r = match got {
                 Ok(img) => Remote::Ready(img),
@@ -219,7 +219,7 @@ impl App {
                 Some(r) if !r.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')) => r.to_string_lossy().replace('\\', "/"),
                 _ => {
                     if std::fs::metadata(p).map_or(0, |m| m.len()) > MAX_BYTES {
-                        self.notice = Some(format!("{} is larger than 50 MB, so Quire did not add it.", p.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())));
+                        self.notice = Some(format!("{} is larger than 50 MB, so Typo did not add it.", p.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())));
                         continue;
                     }
                     let dir = root.join(ATTACHMENTS);

@@ -27,9 +27,9 @@ pub fn welcome(v: V) -> El {
         .key("lockup")
         .gap(14.0)
         .center_y()
-        .label("Quire")
+        .label("Typo")
         .child(rune::icon(if p.dark { &MARK_ON_INK } else { &MARK }, 48.0).a11y_hidden())
-        .child(label("quire", sans(52.0, 600.0).lh(52.0).tracking(-0.045 * 52.0), p.ink).a11y_hidden());
+        .child(label("typo", sans(52.0, 600.0).lh(52.0).tracking(-0.045 * 52.0), p.ink).a11y_hidden());
     let title = col()
         .key("brand")
         .gap(12.0)

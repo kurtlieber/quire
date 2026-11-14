@@ -55,7 +55,7 @@ pub fn start(root: PathBuf, waker: Option<rune::Waker>) -> Watcher {
     let inbox: Arc<Mutex<Changes>> = Arc::default();
     let stop = Arc::new(AtomicBool::new(false));
     let (inbox2, stop2) = (inbox.clone(), stop.clone());
-    let _ = std::thread::Builder::new().name("quire-watch".into()).spawn(move || {
+    let _ = std::thread::Builder::new().name("typo-watch".into()).spawn(move || {
         let mut last = snapshot(&root);
         while !stop2.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(1500));
@@ -96,7 +96,7 @@ pub fn start(root: PathBuf, waker: Option<rune::Waker>) -> Watcher {
 pub fn watch_theme(waker: rune::Waker) -> Arc<AtomicBool> {
     let flag = Arc::new(AtomicBool::new(false));
     let f2 = flag.clone();
-    let _ = std::thread::Builder::new().name("quire-theme".into()).spawn(move || {
+    let _ = std::thread::Builder::new().name("typo-theme".into()).spawn(move || {
         let stamp = || {
             let d = crate::theme::omarchy_dir()?;
             let generation = d.parent().map(|p| p.join("theme.generation"));
@@ -121,7 +121,7 @@ pub fn watch_theme(waker: rune::Waker) -> Arc<AtomicBool> {
 mod tests {
     #[test]
     fn reports_outside_edits_and_removals() {
-        let dir = std::env::temp_dir().join(format!("quire-watch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-watch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Sub")).unwrap();
         std::fs::write(dir.join("A.md"), "one").unwrap();

@@ -1,5 +1,5 @@
-//! Quire: a plain editor for folders of Markdown files.
-// On Windows the app opens no console window. `quire mcp` still talks over the pipes its
+//! Typo: a plain editor for folders of Markdown files.
+// On Windows the app opens no console window. `typo mcp` still talks over the pipes its
 // client gives it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -46,10 +46,10 @@ fn scene_settings(s: &mut App) {
     s.settings_open = true;
 }
 
-/// Text rasterization. `QUIRE_SMOOTHING` picks another mode, for comparing renders.
+/// Text rasterization. `TYPO_SMOOTHING` picks another mode, for comparing renders.
 fn smoothing() -> rune::FontSmoothing {
     use rune::FontSmoothing as F;
-    match std::env::var("QUIRE_SMOOTHING").as_deref() {
+    match std::env::var("TYPO_SMOOTHING").as_deref() {
         Ok("windfoil-chromium") => F::WindfoilChromium,
         Ok("hinted") => F::Hinted,
         Ok("hinted-gpu") => F::HintedGpu,
@@ -73,15 +73,16 @@ fn default_smoothing() -> rune::FontSmoothing {
 }
 
 fn main() {
+    store::move_from_quire();
     if cli::run_subcommand() {
         return;
     }
     rune::prewarm_gpu();
-    rune::set_app_id("quire");
+    rune::set_app_id("typo");
     // The Dock icon on macOS, and the title bar and taskbar icon on Windows. Linux takes the
     // icon from the launcher entry.
     if !cfg!(target_os = "linux") {
-        let _ = rune::set_app_icon(&include_bytes!("../packaging/quire-512.png")[..]);
+        let _ = rune::set_app_icon(&include_bytes!("../packaging/typo-512.png")[..]);
     }
     let spec = AppSpec {
         min_size: Some((520.0, 400.0)),
@@ -91,7 +92,7 @@ fn main() {
         poll: Some(|s: &mut App, t, tx| s.poll(t, tx)),
         setup: Some(|s: &mut App, waker| s.set_waker(waker)),
         scenes: &[("welcome", scene_welcome), ("preview", scene_preview), ("dark", scene_dark), ("focus", scene_focus), ("settings", scene_settings)],
-        ..AppSpec::new("Quire", (1280.0, 800.0), app::init, ui::view)
+        ..AppSpec::new("Typo", (1280.0, 800.0), app::init, ui::view)
     };
     rune::App::new(spec)
         .font_smoothing(smoothing())
@@ -111,7 +112,7 @@ pub(crate) mod scroll_tests {
     #[test]
     fn settings_body_scrolls() {
         let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("quire-scroll-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-scroll-{}", std::process::id()));
         // SAFETY: tests in this module run before any thread reads these variables.
         unsafe {
             std::env::set_var("HOME", &dir);
@@ -147,7 +148,7 @@ mod theme_choice_tests {
     #[test]
     fn each_mode_uses_its_own_theme() {
         let _env = crate::scroll_tests::ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("quire-themes-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-themes-{}", std::process::id()));
         // SAFETY: the ENV lock keeps other tests that read these variables out.
         unsafe {
             std::env::set_var("HOME", &dir);
@@ -176,7 +177,7 @@ mod toolbar_tests {
     #[test]
     fn toolbar_actions_edit_the_selection() {
         let _env = crate::scroll_tests::ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("quire-toolbar-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-toolbar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         // SAFETY: the ENV lock keeps other tests that read these variables out.
         unsafe {
@@ -212,7 +213,7 @@ mod lock_tests {
     #[test]
     fn a_note_locks_and_unlocks() {
         let _env = crate::scroll_tests::ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("quire-lock-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-lock-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         // SAFETY: the ENV lock keeps other tests that read these variables out.
         unsafe {

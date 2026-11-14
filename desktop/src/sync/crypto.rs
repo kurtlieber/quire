@@ -46,7 +46,7 @@ pub fn seal(k: &Keys, plain: &[u8]) -> Vec<u8> {
 
 pub fn open(k: &Keys, data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < MAGIC.len() + 12 + 16 || &data[..MAGIC.len()] != MAGIC {
-        return Err("A remote file is not in Quire's encrypted format.".into());
+        return Err("A remote file is not in Typo's encrypted format.".into());
     }
     let cipher = Aes256Gcm::new_from_slice(&k.enc).expect("32-byte key");
     let (nonce, ct) = data[MAGIC.len()..].split_at(12);
