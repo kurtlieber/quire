@@ -238,7 +238,7 @@ fn open_format(store: &dyn Store, r: &Remote, create: bool) -> Result<Option<cry
         store.put(FORMAT, serde_json::to_vec_pretty(&f).unwrap_or_default().as_slice())?;
         return Ok(keys);
     };
-    let f: Format = serde_json::from_slice(&bytes).map_err(|_| "The remote folder has a format file Quire cannot read.".to_string())?;
+    let f: Format = serde_json::from_slice(&bytes).map_err(|_| "The remote folder has a format file Typo cannot read.".to_string())?;
     match (f.encrypted, r.encrypt) {
         (true, false) => return Err("The remote notes are encrypted. Turn on Encrypt before upload and enter the passphrase.".into()),
         (false, true) => return Err("The remote notes are not encrypted. Turn off Encrypt before upload, or use a new remote folder.".into()),

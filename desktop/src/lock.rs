@@ -5,7 +5,7 @@
 //! ```text
 //! %QUIRE-LOCKED-NOTE v1 pbkdf2-sha256 600000 <salt, base64>
 //!
-//! This note is locked with a password. Open it in Quire to read it.
+//! This note is locked with a password. Open it in Typo to read it.
 //!
 //! <the sealed text, base64, 76 characters a line>
 //! ```
@@ -18,7 +18,7 @@ use base64::Engine;
 use crate::sync::crypto::{self, Keys};
 
 pub const MAGIC: &str = "%QUIRE-LOCKED-NOTE";
-const NOTICE: &str = "This note is locked with a password. Open it in Quire to read it.";
+const NOTICE: &str = "This note is locked with a password. Open it in Typo to read it.";
 /// A password shorter than this is refused.
 pub const MIN_PASSWORD: usize = 8;
 
@@ -75,12 +75,13 @@ fn parts(text: &str) -> Result<(Vec<u8>, u32, Vec<u8>), String> {
         [m, "v1", "pbkdf2-sha256", iterations, salt] if *m == MAGIC => {
             let iterations: u32 = iterations.parse().map_err(|_| bad())?;
             let salt = b64().decode(salt).map_err(|_| bad())?;
-            // The body is every line after the notice, joined.
-            let body: String = lines.filter(|l| !l.trim().is_empty() && *l != NOTICE).map(str::trim).collect();
+            // The body is every base64 line after the notice, joined. The notice is a sentence,
+            // and base64 has no spaces, so Quire's notice from before the rename drops out too.
+            let body: String = lines.map(str::trim).filter(|l| !l.is_empty() && !l.contains(' ')).collect();
             let sealed = b64().decode(body).map_err(|_| bad())?;
             Ok((salt, iterations, sealed))
         }
-        [m, version, ..] if *m == MAGIC => Err(format!("This note is locked with a newer format ({version}). Update Quire to open it.")),
+        [m, version, ..] if *m == MAGIC => Err(format!("This note is locked with a newer format ({version}). Update Typo to open it.")),
         _ => Err(bad()),
     }
 }
@@ -125,6 +126,10 @@ mod tests {
         let other = Key { keys: crypto::derive("other", b"fedcba9876543210", 1000), salt: b"fedcba9876543210".to_vec(), iterations: 1000 };
         assert!(open_with(&key, &seal(&other, "x")).is_err());
         assert!(open(&locked.replace(" v1 ", " v9 "), "tiger lily").unwrap_err().contains("newer format"));
+        // A note Quire locked, before the rename to Typo, opens too.
+        let quire = locked.replace(NOTICE, "This note is locked with a password. Open it in Quire to read it.");
+        assert_ne!(quire, locked);
+        assert_eq!(open(&quire, "tiger lily").unwrap().0, text);
         // Two seals of one text differ, because each has its own nonce.
         assert_ne!(seal(&key, text), seal(&key, text));
         assert!(!is_locked("# A note"));

@@ -2777,25 +2777,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quire"
-version = "1.1.0"
-dependencies = [
- "aes-gcm",
- "base64",
- "comrak",
- "embed-resource",
- "getrandom 0.2.17",
- "hmac",
- "pbkdf2",
- "rsa",
- "rune",
- "serde",
- "serde_json",
- "sha2",
- "ureq",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3817,6 +3798,25 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "typo"
+version = "2.0.0"
+dependencies = [
+ "aes-gcm",
+ "base64",
+ "comrak",
+ "embed-resource",
+ "getrandom 0.2.17",
+ "hmac",
+ "pbkdf2",
+ "rsa",
+ "rune",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+]
 
 [[package]]
 name = "uds_windows"

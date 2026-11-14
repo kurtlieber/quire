@@ -1,4 +1,4 @@
-//! Settings: MCP. `quire mcp --folder <path>` is the stdio server an AI app starts; the HTTP
+//! Settings: MCP. `typo mcp --folder <path>` is the stdio server an AI app starts; the HTTP
 //! transport runs inside this window while it is open.
 
 use rune::{El, col, el, icon, row, text};
@@ -15,13 +15,13 @@ pub fn config_json(v: V) -> String {
     let s = v.s;
     let m = &s.settings().mcp;
     let path = s.vault.as_ref().map_or_else(String::new, |x| x.path.to_string_lossy().into_owned());
-    let exe = std::env::current_exe().ok().map_or_else(|| "quire".to_string(), |p| p.to_string_lossy().into_owned());
+    let exe = std::env::current_exe().ok().map_or_else(|| "typo".to_string(), |p| p.to_string_lossy().into_owned());
     let server = if m.transport == "http" {
         serde_json::json!({ "url": url(v), "headers": { "Authorization": format!("Bearer {}", m.token) } })
     } else {
         serde_json::json!({ "command": exe, "args": ["mcp", "--folder", path] })
     };
-    serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": { "quire": server } })).unwrap_or_default()
+    serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": { "typo": server } })).unwrap_or_default()
 }
 
 fn url(v: V) -> String {
@@ -51,7 +51,7 @@ pub fn mcp(v: V) -> El {
         v,
         "transport",
         "Transport",
-        Some("With stdio, the AI app starts Quire's helper itself. HTTP serves a local endpoint on this computer."),
+        Some("With stdio, the AI app starts Typo's helper itself. HTTP serves a local endpoint on this computer."),
         settings_seg_mono(p, "tr-seg", vec![tr("stdio", "stdio"), tr("http", "HTTP")]),
     ));
     if http {
@@ -187,7 +187,7 @@ pub fn mcp(v: V) -> El {
             v,
             "confirm",
             "Ask before changes",
-            Some("Quire shows the change and waits for you to approve it."),
+            Some("Typo shows the change and waits for you to approve it."),
             switch(p, "confirm-switch", m.confirm, "Ask before changes", |s, _| {
                 let e = s.settings().mcp.confirm;
                 s.settings_mut().mcp.confirm = !e;

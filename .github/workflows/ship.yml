@@ -1,8 +1,8 @@
-# Ships Quire from this fork, which no longer follows bjarneo/quire (Kurt's choice, 2026-11-14,
+# Ships Typo, a fork that no longer follows bjarneo/quire (Kurt's choice, 2026-11-14,
 # kurtlieber/dotfiles#622; FORK.md, "Releases"). The version in desktop/Cargo.toml is the
 # release. When a merge into main changes desktop/ and that version has no release yet, this tags
 # main as v<version>, builds it with release.yml, and makes it the latest release once every
-# desktop file is attached and the Linux build's `quire --version` names it. Quire's Update
+# desktop file is attached and the Linux build's `typo --version` names it. Typo's Update
 # button then offers it.
 #
 # A merge that changes desktop/ without a new version fails here, so the change can't sit
@@ -54,13 +54,13 @@ jobs:
           fi
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -1)
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::desktop/Cargo.toml's version \"$version\" is not X.Y.Z, which Quire's updater compares"; exit 1
+            echo "::error::desktop/Cargo.toml's version \"$version\" is not X.Y.Z, which Typo's updater compares"; exit 1
           fi
           tag="v$version"
           # This fork always has a latest release, so an error here stops the run rather than
           # read as "none" and build a release again.
           mine=$(gh api "repos/$REPO/releases/latest" --jq .tag_name)
-          echo "main is Quire $version; the latest release is $mine"
+          echo "main is Typo $version; the latest release is $mine"
 
           if [ "$mine" = "$tag" ]; then
             if git diff --quiet "$mine" HEAD -- desktop; then
@@ -70,7 +70,7 @@ jobs:
             echo "::error::main has changed desktop/ since $mine, but desktop/Cargo.toml still says $version. Bump the version in a pull request to ship the change (FORK.md, Releases)."
             exit 1
           fi
-          # Quire's Update button offers only a newer version.
+          # Typo's Update button offers only a newer version.
           if [ "$(printf '%s\n' "${mine#v}" "$version" | sort -V | tail -1)" != "$version" ]; then
             echo "::error::$version is older than the latest release $mine, so no Update button would offer it"; exit 1
           fi
@@ -109,7 +109,7 @@ jobs:
             if [ -n "$PREV" ]; then
               printf '\nChanges since %s: https://github.com/%s/compare/%s...%s\n' "$PREV" "$REPO" "$PREV" "$TAG" >> "$notes"
             fi
-            gh release create "$TAG" --verify-tag --latest=false --title "Quire $v" --notes-file "$notes"
+            gh release create "$TAG" --verify-tag --latest=false --title "Typo $v" --notes-file "$notes"
           fi
           since=$(date -u -d '-30 sec' +%Y-%m-%dT%H:%M:%SZ)
           gh workflow run release.yml --ref main -f tag="$TAG"
@@ -127,17 +127,17 @@ jobs:
             echo "::error::release.yml run $run failed; run this workflow again to build $TAG again"; exit 1
           fi
           have=$(gh release view "$TAG" --json assets --jq '.assets[].name')
-          for a in "quire-$v-linux-x86_64.tar.gz" "quire-$v-macos-arm64.zip" "quire-$v-windows-x86_64.zip"; do
+          for a in "typo-$v-linux-x86_64.tar.gz" "typo-$v-macos-arm64.zip" "typo-$v-windows-x86_64.zip"; do
             grep -qxF "$a" <<< "$have" || { echo "::error::$TAG has no $a"; exit 1; }
           done
-          # Quire compares the release's version with its own, so a build that calls itself
+          # Typo compares the release's version with its own, so a build that calls itself
           # anything else would offer the same update forever.
           dl=$(mktemp -d)
-          gh release download "$TAG" -p "quire-$v-linux-x86_64.tar.gz" -D "$dl"
-          tar -xzf "$dl/quire-$v-linux-x86_64.tar.gz" -C "$dl"
-          says=$("$dl/quire-$v-linux-x86_64/quire" --version)
-          if [ "$says" != "quire $v" ]; then
-            echo "::error::the Linux build of $TAG says \"$says\", not \"quire $v\""; exit 1
+          gh release download "$TAG" -p "typo-$v-linux-x86_64.tar.gz" -D "$dl"
+          tar -xzf "$dl/typo-$v-linux-x86_64.tar.gz" -C "$dl"
+          says=$("$dl/typo-$v-linux-x86_64/typo" --version)
+          if [ "$says" != "typo $v" ]; then
+            echo "::error::the Linux build of $TAG says \"$says\", not \"typo $v\""; exit 1
           fi
           gh release edit "$TAG" --latest
           echo "$TAG is the latest release"

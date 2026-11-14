@@ -262,7 +262,7 @@ fn contrast(a: Color, b: Color) -> f32 {
     la.max(lb) / la.min(lb)
 }
 
-/// Quire's palette made from an Omarchy theme: its background is the paper, its foreground
+/// Typo's palette made from an Omarchy theme: its background is the paper, its foreground
 /// the ink, its accent the accent. The rest mixes from those, as the design's tones do.
 pub fn omarchy_pal(src: &str) -> Option<Pal> {
     let m = parse_colors(src);

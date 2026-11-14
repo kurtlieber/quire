@@ -1,6 +1,6 @@
 //! A Model Context Protocol server for one notes folder.
 //!
-//! `quire mcp --folder <path>` serves it over stdio, one JSON-RPC message per line. While the
+//! `typo mcp --folder <path>` serves it over stdio, one JSON-RPC message per line. While the
 //! app runs with the HTTP transport on, the same handler answers `POST /mcp` on 127.0.0.1.
 //! Settings (tools, access, hidden folders) are read again for every call, so changes made in
 //! the app apply at once.
@@ -66,11 +66,11 @@ fn arg<'a>(a: &'a Value, k: &str) -> &'a str {
 
 fn call(ctx: &Ctx, name: &str, a: &Value) -> Value {
     if !MCP_TOOLS.iter().any(|t| t.0 == name) || !ctx.mcp.allows(name) {
-        return fail(format!("The tool {name} is turned off in Quire's settings."));
+        return fail(format!("The tool {name} is turned off in Typo's settings."));
     }
     let write = MCP_TOOLS.iter().any(|t| t.0 == name && t.2);
     if write && ctx.mcp.confirm {
-        return fail("Quire is set to ask before changes, and this version cannot show that prompt yet. Turn off \"Ask before changes\" in Quire's MCP settings to allow edits.");
+        return fail("Typo is set to ask before changes, and this version cannot show that prompt yet. Turn off \"Ask before changes\" in Typo's MCP settings to allow edits.");
     }
     let vault = match crate::vault::load(&ctx.root) {
         Ok(v) => v,
@@ -193,7 +193,7 @@ pub fn handle(ctx: &Ctx, msg: &Value) -> Option<Value> {
     let result = match method {
         "initialize" => {
             let v = msg.pointer("/params/protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL);
-            json!({ "protocolVersion": v, "capabilities": { "tools": { "listChanged": false } }, "serverInfo": { "name": "quire", "version": env!("CARGO_PKG_VERSION") },
+            json!({ "protocolVersion": v, "capabilities": { "tools": { "listChanged": false } }, "serverInfo": { "name": "typo", "version": env!("CARGO_PKG_VERSION") },
                 "instructions": "Notes are Markdown files. Link notes with [[Note name]] and tag them with #tag." })
         }
         "ping" => json!({}),
@@ -221,7 +221,7 @@ fn ctx_for(root: &Path) -> Ctx {
     Ctx { root: root.to_path_buf(), mcp: p.settings.mcp, update_links: p.settings.update_links }
 }
 
-/// `quire mcp --folder <path>`: serves the folder over stdio until stdin closes.
+/// `typo mcp --folder <path>`: serves the folder over stdio until stdin closes.
 pub fn serve_stdio(root: PathBuf) -> std::io::Result<()> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
@@ -275,7 +275,7 @@ pub fn serve_http(port: u16, cfg: HttpCfg) -> std::io::Result<HttpServer> {
     let cfg = Arc::new(Mutex::new(cfg));
     let stop = Arc::new(AtomicBool::new(false));
     let (c2, s2) = (cfg.clone(), stop.clone());
-    std::thread::Builder::new().name("quire-mcp-http".into()).spawn(move || {
+    std::thread::Builder::new().name("typo-mcp-http".into()).spawn(move || {
         while !s2.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _)) => {
@@ -408,14 +408,14 @@ mod tests {
 
     #[test]
     fn lists_reads_and_renames_with_link_updates() {
-        let dir = std::env::temp_dir().join(format!("quire-mcp-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-mcp-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Docs")).unwrap();
         std::fs::write(dir.join("A.md"), "# A\n\nSee [[B]].").unwrap();
         std::fs::write(dir.join("Docs/B.md"), "# B").unwrap();
         let c = ctx(&dir);
         let init = handle(&c, &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})).unwrap();
-        assert_eq!(init["result"]["serverInfo"]["name"], "quire");
+        assert_eq!(init["result"]["serverInfo"]["name"], "typo");
         let list = handle(&c, &json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).unwrap();
         assert!(list["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "read_note"));
         let r = handle(&c, &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_note","arguments":{"path":"Docs/B"}}})).unwrap();
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn http_needs_the_token_and_answers_json_rpc() {
-        let dir = std::env::temp_dir().join(format!("quire-mcp-http-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("typo-mcp-http-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("A.md"), "# A").unwrap();
         let mcp = Mcp::default();

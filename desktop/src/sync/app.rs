@@ -18,7 +18,7 @@ impl<T: Send + 'static> Job<T> {
     pub(crate) fn spawn(waker: Option<rune::Waker>, f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Job<T> {
         let slot: Arc<Mutex<Option<Result<T, String>>>> = Arc::default();
         let s2 = slot.clone();
-        let _ = std::thread::Builder::new().name("quire-sync".into()).spawn(move || {
+        let _ = std::thread::Builder::new().name("typo-sync".into()).spawn(move || {
             let r = f();
             if let Ok(mut g) = s2.lock() {
                 *g = Some(r);
@@ -382,7 +382,7 @@ impl App {
         }
         if !conflicts.is_empty() {
             self.notice = Some(format!(
-                "{} changed on two devices. Quire kept both versions: {}.",
+                "{} changed on two devices. Typo kept both versions: {}.",
                 if conflicts.len() == 1 { "A note" } else { "Some notes" },
                 conflicts.join(", ")
             ));

@@ -1,4 +1,4 @@
-//! Quire's state and the actions that change it.
+//! Typo's state and the actions that change it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -228,7 +228,7 @@ pub fn init() -> App {
     crate::update::clean_up();
     if let Some(from) = app.persist.updated_from.take() {
         if from != crate::update::CURRENT {
-            app.notice = Some(format!("Quire is updated to {}.", crate::update::CURRENT));
+            app.notice = Some(format!("Typo is updated to {}.", crate::update::CURRENT));
         }
         app.persist_later();
     }
@@ -258,7 +258,7 @@ pub fn init() -> App {
 }
 
 /// The sample folder: `~/Documents/Field Notes`, as the design has it. If a folder with that
-/// name already exists and is not Quire's sample, the sample goes to Quire's data folder.
+/// name already exists and is not Typo's sample, the sample goes to Typo's data folder.
 pub fn sample_path() -> PathBuf {
     let docs = store::documents_dir().join(crate::sample::NAME);
     let fallback = store::dirs().map(|d| d.data().join(crate::sample::NAME));
@@ -617,7 +617,7 @@ impl App {
             for rel in std::mem::take(&mut self.dirty) {
                 if let Some(text) = v.files.get(&rel) {
                     if let Err(e) = vault::write_note(&v.path, &rel, text) {
-                        eprintln!("quire: could not save {rel}: {e}");
+                        eprintln!("typo: could not save {rel}: {e}");
                     }
                 }
             }
@@ -718,7 +718,7 @@ impl App {
         match self.load_vault(&path) {
             Ok(()) => {
                 if let Some(v) = &self.vault {
-                    tx.set_title(format!("{} · Quire", v.name));
+                    tx.set_title(format!("{} · Typo", v.name));
                 }
                 self.focus_editor(tx);
             }
@@ -748,7 +748,7 @@ impl App {
         self.watcher = None;
         self.refresh_counts();
         self.persist_later();
-        tx.set_title("Quire");
+        tx.set_title("Typo");
     }
 
     pub fn new_vault_path(&self) -> PathBuf {

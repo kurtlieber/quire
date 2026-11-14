@@ -1,4 +1,4 @@
-//! The "Field Notes" sample folder. Quire writes it on first launch and on "Restore".
+//! The "Field Notes" sample folder. Typo writes it on first launch and on "Restore".
 
 use crate::keys::{k, mod_click};
 
@@ -12,9 +12,9 @@ pub fn files() -> Vec<(&'static str, String)> {
         (
             "Welcome.md",
             format!(
-                "# Welcome to Quire
+                "# Welcome to Typo
 
-Quire edits a folder of plain Markdown files. Each note is a `.md` file on your disk, so any other app can open it, and it will still open in twenty years.
+Typo edits a folder of plain Markdown files. Each note is a `.md` file on your disk, so any other app can open it, and it will still open in twenty years.
 
 ## The basics
 
@@ -152,7 +152,7 @@ See also [[About this folder]].
             "Docs/About this folder.md",
             "# About this folder
 
-Everything here is plain Markdown. Nothing depends on Quire.
+Everything here is plain Markdown. Nothing depends on Typo.
 
 ## Layout
 

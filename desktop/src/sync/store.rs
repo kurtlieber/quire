@@ -80,9 +80,9 @@ fn send(req: ureq::Request, body: Option<&[u8]>) -> Result<(u16, Vec<u8>), Fail>
 /// The message for a busy or failing service, the same for every provider.
 fn busy(code: u16) -> Option<String> {
     match code {
-        429 => Some("The storage service asks Quire to slow down (429). Quire tries again on the next sync.".into()),
-        502..=504 => Some(format!("The storage service did not answer in time ({code}). Quire tries again on the next sync.")),
-        500..=599 => Some(format!("The storage service had an error ({code}). Quire tries again on the next sync.")),
+        429 => Some("The storage service asks Typo to slow down (429). Typo tries again on the next sync.".into()),
+        502..=504 => Some(format!("The storage service did not answer in time ({code}). Typo tries again on the next sync.")),
+        500..=599 => Some(format!("The storage service had an error ({code}). Typo tries again on the next sync.")),
         _ => None,
     }
 }
@@ -210,7 +210,7 @@ impl Azure {
             let k = base64::engine::general_purpose::STANDARD.decode(secret.trim()).map_err(|_| "The account key is not valid base64. Copy it again from the Azure portal.".to_string())?;
             (Some(k), None)
         };
-        let base = std::env::var("QUIRE_AZURE_BASE").unwrap_or_else(|_| format!("https://{account}.blob.core.windows.net"));
+        let base = std::env::var("TYPO_AZURE_BASE").unwrap_or_else(|_| format!("https://{account}.blob.core.windows.net"));
         Ok(Azure { account, container: container.trim().to_string(), key, sas, prefix: prefix.to_string(), base, agent: agent() })
     }
 

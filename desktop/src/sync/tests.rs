@@ -32,7 +32,7 @@ struct Device {
 
 impl Device {
     fn new(tag: &str, name: &'static str) -> Device {
-        let root = std::env::temp_dir().join(format!("quire-sync-{}-{tag}-{name}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("typo-sync-{}-{tag}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Device { base: Some(root.with_extension("base.json")), root, name }
@@ -302,7 +302,7 @@ fn s3_errors_say_what_to_fix() {
 fn two_apps_sync_through_s3() {
     use rune::{Env, Runtime};
     let _env = crate::scroll_tests::ENV.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("quire-appsync-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("typo-appsync-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     // SAFETY: the ENV lock keeps other tests that read these variables out.
     unsafe {
@@ -468,11 +468,11 @@ fn an_unsaved_base_loses_no_remote_edit() {
 }
 
 /// A read-only check against the store in a real settings file, with timings:
-/// `QUIRE_LIVE_STATE=~/.config/quire/state.json cargo test live_store_check -- --ignored --nocapture`.
+/// `TYPO_LIVE_STATE=~/.config/typo/state.json cargo test live_store_check -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn live_store_check() {
-    let Ok(path) = std::env::var("QUIRE_LIVE_STATE") else { return };
+    let Ok(path) = std::env::var("TYPO_LIVE_STATE") else { return };
     let state: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let sy = &state["settings"]["sync"];
     let provider = sy["provider"].as_str().unwrap_or("none").to_string();
@@ -493,11 +493,11 @@ fn live_store_check() {
 }
 
 /// Prints a summary of the remote manifest in a real settings file: counts, devices and
-/// conflict copies. `QUIRE_LIVE_STATE=… cargo test live_manifest_summary -- --ignored --nocapture`.
+/// conflict copies. `TYPO_LIVE_STATE=… cargo test live_manifest_summary -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn live_manifest_summary() {
-    let Ok(path) = std::env::var("QUIRE_LIVE_STATE") else { return };
+    let Ok(path) = std::env::var("TYPO_LIVE_STATE") else { return };
     let state: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let sy = &state["settings"]["sync"];
     let provider = sy["provider"].as_str().unwrap_or("none").to_string();
@@ -523,11 +523,11 @@ fn live_manifest_summary() {
 }
 
 /// Reads every object in the remote manifest once, as a first sync does, and counts the
-/// answers. Read-only. `QUIRE_LIVE_STATE=… cargo test live_burst -- --ignored --nocapture`.
+/// answers. Read-only. `TYPO_LIVE_STATE=… cargo test live_burst -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn live_burst() {
-    let Ok(path) = std::env::var("QUIRE_LIVE_STATE") else { return };
+    let Ok(path) = std::env::var("TYPO_LIVE_STATE") else { return };
     let state: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let sy = &state["settings"]["sync"];
     let provider = sy["provider"].as_str().unwrap_or("none").to_string();
@@ -564,7 +564,7 @@ fn a_busy_gateway_is_retried() {
     assert!(objects.lock().unwrap().len() >= 42);
     let (url, _) = s3_server_failing("testsecret", 1);
     let err = test(&custom(&url, "notes", "testsecret", false), 0, false).unwrap_err();
-    assert_eq!(err, "The storage service did not answer in time (504). Quire tries again on the next sync.");
+    assert_eq!(err, "The storage service did not answer in time (504). Typo tries again on the next sync.");
 }
 
 /// Syncs with `pins` as the device's pins, then takes the pins the sync returns.

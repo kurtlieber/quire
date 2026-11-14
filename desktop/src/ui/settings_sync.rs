@@ -363,7 +363,7 @@ pub fn sync(v: V) -> El {
             })
             .child(text(msg).font(sans(12.5, 400.0).lh(12.5 * 1.45)).color(color).wrap().grow(1.0).min_w(180.0)),
     );
-    c.child(label("Keys are saved in Quire's settings file, never inside the notes folder.", mono(11.0, 400.0).lh(16.5), p.mute).pt(14.0).wrap())
+    c.child(label("Keys are saved in Typo's settings file, never inside the notes folder.", mono(11.0, 400.0).lh(16.5), p.mute).pt(14.0).wrap())
 }
 
 fn field(v: V, pid: &str, fd: &Field, bad: bool) -> El {
