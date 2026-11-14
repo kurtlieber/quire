@@ -17,9 +17,7 @@ use crate::sync::app::Job;
 const API: &str = "https://api.github.com/repos/kurtlieber/quire/releases/latest";
 const DOWNLOADS: &str = "https://github.com/kurtlieber/quire/releases/download/";
 pub const PAGE: &str = "https://github.com/kurtlieber/quire/releases/latest";
-// This fork: own releases are upstream's version plus -kl.N (update/fork.rs, FORK.md).
-mod fork;
-pub const CURRENT: &str = fork::VERSION;
+pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// The time from one automatic check to the next, in seconds.
 const EVERY: f64 = 6.0 * 3600.0;
 /// The time from the start to the first check, in seconds.
@@ -65,7 +63,7 @@ pub fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
 
 /// Whether `latest` is newer than `current`.
 pub fn newer(latest: &str, current: &str) -> bool {
-    fork::newer(latest, current) // this fork: four numbers (update/fork.rs)
+    matches!((parse_version(latest), parse_version(current)), (Some(a), Some(b)) if a > b)
 }
 
 /// The release file for this system.

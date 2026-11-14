@@ -10,6 +10,8 @@
 <p align="center">A plain editor for folders of Markdown files.<br>
 Each note is a <code>.md</code> file on your disk, so any other app can open it.</p>
 
+<p align="center">This is Kurt Lieber's fork of <a href="https://github.com/bjarneo/quire">bjarneo/quire</a>, with its own releases. See <a href="FORK.md">FORK.md</a>.</p>
+
 <p align="center">
   <a href="https://bjarneo.github.io/quire/">Website</a> ·
   <a href="#install">Install</a> ·
@@ -71,23 +73,22 @@ The Android app is the same editor for a phone: one pane, a drawer for the files
 
 ## Install
 
-Download the build for your system from the [latest release](https://github.com/bjarneo/quire/releases/latest):
+Download the build for your system from the [latest release](https://github.com/kurtlieber/quire/releases/latest):
 
 | System | File |
 | --- | --- |
 | Linux, x86-64 | `quire-<version>-linux-x86_64.tar.gz`. Unpack it and run `./install.sh`. |
 | macOS, Apple silicon | `quire-<version>-macos-arm64.zip`. The app is not notarized, so right-click it and choose **Open** the first time. |
 | Windows, x86-64 | `quire-<version>-windows-x86_64.zip`. The app is not signed, so SmartScreen can warn you. |
-| Android 8.0 and later | `quire-<version>-android.apk` |
 
-Quire is pre-release. To build it yourself, follow the steps below.
+This fork's releases have no Android APK. To build Quire yourself, follow the steps below.
 
 ### Desktop (Linux)
 
 You need Rust and, on Linux, the `libxkbcommon` and `wayland` development packages. `rustup` installs the pinned toolchain on the first build.
 
 ```sh
-git clone https://github.com/bjarneo/quire
+git clone https://github.com/kurtlieber/quire
 cd quire/desktop
 ./install.sh        # builds, then installs quire, its icon and a launcher entry for your user
 quire ~/notes       # or open Quire from the app launcher

@@ -1,6 +1,6 @@
 [package]
 name = "quire"
-version = "0.5.6"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 description = "A plain editor for folders of Markdown files."
