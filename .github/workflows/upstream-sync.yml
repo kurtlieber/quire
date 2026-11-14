@@ -5,6 +5,11 @@
 # builds it with release.yml and makes it the latest release once every desktop file is there.
 # Quire's Update button then offers it.
 #
+# Own releases (Kurt's choice, 2026-11-14, kurtlieber/dotfiles#597): when this fork already has
+# upstream's latest release and main has changed Quire (desktop/) since its latest release, it
+# tags main as that version plus -kl.N, such as v0.5.6-kl.1, and ships it the same way. A merge
+# into main that changes desktop/ starts this workflow, so Kurt's merge of a fix ships it.
+#
 # One exception: GitHub doesn't let a workflow push a change to workflow files. When upstream's
 # release changes its own workflows, this opens a pull request from bjarneo:main for Kurt
 # instead, and the next run after his merge ships the release.
@@ -15,7 +20,7 @@ on:
     - cron: "17 22 * * *" # 06:17 in Manila
   push:
     branches: [main]
-    paths: [.github/workflows/upstream-sync.yml]
+    paths: [.github/workflows/upstream-sync.yml, "desktop/**"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -46,6 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # The branch's tip, not the pushed commit, when two merges come close together.
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Keep this scheduled workflow on
@@ -65,14 +72,47 @@ jobs:
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::upstream's latest release $tag is not vX.Y.Z, which Quire's updater needs"; exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           mine=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
-          if [ "$mine" = "$tag" ]; then
-            echo "this fork's latest release is $tag"
-            echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+
+          if [ "${mine%-kl.*}" = "$tag" ]; then
+            # This fork has upstream's latest release, as $tag or an own $tag-kl.N. A change to
+            # Quire on main since then ships as the next $tag-kl.N.
+            if git diff --quiet "$mine" HEAD -- desktop; then
+              echo "this fork's latest release is $mine, and main has changed nothing in desktop/ since"
+              echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            # Only this fork's own commits ship this way. Commits of upstream's that upstream
+            # hasn't released (a merge of bjarneo:main for its workflows) wait for its next release.
+            git fetch -q --no-tags "https://github.com/$UPSTREAM.git" \
+              "+refs/tags/$tag:refs/upstream/release" "+refs/heads/main:refs/upstream/main"
+            early=$(comm -12 <(git rev-list refs/upstream/main ^refs/upstream/release | sort) \
+              <(git rev-list HEAD ^refs/upstream/release | sort) | wc -l)
+            if [ "$early" != 0 ]; then
+              echo "::notice::main has $early commits of upstream's that upstream hasn't released; they ship with its next release"
+              echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            own=$(git tag --points-at HEAD --list "$tag-kl.*" | sort -V | tail -1)
+            if [ -n "$own" ]; then
+              echo "$own is tagged here but not the latest release: build it again"
+              if [ "$DRY_RUN" = true ]; then echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0; fi
+            else
+              n=$(git tag --list "$tag-kl.*" | sed "s/^$tag-kl\.//" | grep -xE '[0-9]+' | sort -n | tail -1 || true)
+              own="$tag-kl.$(( ${n:-0} + 1 ))"
+              git log --oneline -3
+              if [ "$DRY_RUN" = true ]; then
+                echo "dry run: would tag $own"
+                echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0
+              fi
+              git tag "$own"
+              git push -q origin "refs/tags/$own"
+            fi
+            { echo "tag=$own"; echo "prev=$mine"; echo "ship=build"; } >> "$GITHUB_OUTPUT"; exit 0
           fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
             echo "$tag is tagged here but not the latest release: build it again"
+            if [ "$DRY_RUN" = true ]; then echo "ship=no" >> "$GITHUB_OUTPUT"; exit 0; fi
             echo "ship=build" >> "$GITHUB_OUTPUT"; exit 0
           fi
 
@@ -164,15 +204,22 @@ jobs:
         if: steps.merge.outputs.ship == 'build'
         env:
           TAG: ${{ steps.merge.outputs.tag }}
+          PREV: ${{ steps.merge.outputs.prev }}
         run: |
           set -euo pipefail
           v="${TAG#v}"
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
-            # Not the latest until the files are attached, so no Update button points at a
-            # release that has nothing to download yet.
+          # Not the latest until the files are attached, so no Update button points at a
+          # release that has nothing to download yet.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            :
+          elif [ -n "$PREV" ]; then
+            gh release create "$TAG" --verify-tag --latest=false --title "Quire $v" --notes "Quire ${TAG%-kl.*} from upstream with this fork's own fixes, built in this fork. The fixes and their upstream issues are in [FORK.md](https://github.com/$REPO/blob/main/FORK.md#the-forks-own-fixes). Changes since $PREV: https://github.com/$REPO/compare/$PREV...$TAG
+
+          There is no Android APK: upstream signs that by hand."
+          else
             gh release create "$TAG" --verify-tag --latest=false --title "Quire $v" --notes "Quire $v from upstream [bjarneo/quire $TAG](https://github.com/bjarneo/quire/releases/tag/$TAG), merged and built in this fork with no review ([FORK.md](https://github.com/$REPO/blob/main/FORK.md)). What's new is in upstream's release notes.
 
-          The one change of this fork: Quire's **Update** button follows this fork's releases. There is no Android APK: upstream signs that by hand."
+          This fork's changes: Quire's **Update** button follows this fork's releases, and the fork's own fixes are in [FORK.md](https://github.com/$REPO/blob/main/FORK.md#the-forks-own-fixes). There is no Android APK: upstream signs that by hand."
           fi
           since=$(date -u -d '-30 sec' +%Y-%m-%dT%H:%M:%SZ)
           gh workflow run release.yml --ref main -f tag="$TAG"
@@ -193,5 +240,14 @@ jobs:
           for a in "quire-$v-linux-x86_64.tar.gz" "quire-$v-macos-arm64.zip" "quire-$v-windows-x86_64.zip"; do
             grep -qxF "$a" <<< "$have" || { echo "::error::$TAG has no $a"; exit 1; }
           done
+          # The build takes its version from the tag (desktop/src/update/fork.rs). A build that
+          # calls itself anything else would offer the same update forever.
+          dl=$(mktemp -d)
+          gh release download "$TAG" -p "quire-$v-linux-x86_64.tar.gz" -D "$dl"
+          tar -xzf "$dl/quire-$v-linux-x86_64.tar.gz" -C "$dl"
+          says=$("$dl/quire-$v-linux-x86_64/quire" --version)
+          if [ "$says" != "quire $v" ]; then
+            echo "::error::the Linux build of $TAG says \"$says\", not \"quire $v\""; exit 1
+          fi
           gh release edit "$TAG" --latest
           echo "$TAG is the latest release"
