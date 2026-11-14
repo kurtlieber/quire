@@ -33,6 +33,8 @@ The Android app (`android/`) still asks upstream: this fork builds no APK.
 
 - **The mouse wheel stops at the caret** in source mode, on Wayland with an input method such as fcitx5. The fix is in the vendored winit, `desktop/vendor/winit/src/platform_impl/linux/wayland/seat/text_input/mod.rs`. Kurt reported it upstream as [bjarneo/quire#2](https://github.com/bjarneo/quire/issues/2). Its tests are outside Quire's `cargo test`; run `cargo test --lib text_input` in `desktop/vendor/winit`.
 
+- **Markdown is GitHub Flavored Markdown** plus Obsidian's syntax, parsed by [comrak](https://github.com/kivikakk/comrak) in `desktop/src/md/gfm.rs` (1.1.0, [kurtlieber/dotfiles#636](https://github.com/kurtlieber/dotfiles/issues/636)). The preview, outline, tags, backlinks and the link rewrite on rename all read its tree. Source mode's highlighting still uses the line helpers in `desktop/src/md.rs`. The Android app keeps its own parser.
+
 ## Releases
 
 The version in `desktop/Cargo.toml` is the release. A pull request that changes `desktop/` also:

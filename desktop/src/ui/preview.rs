@@ -1,11 +1,14 @@
-//! The preview: a note drawn as a page, as the design's `renderPreview` draws it.
+//! The preview: a note drawn as a page from its Markdown tree (`md::tree`), styled as the
+//! design's `renderPreview` draws it.
+
+use std::collections::HashSet;
 
 use rune::{Color, El, Family, Link, Span, TextStyle, Tx, col, el, icon, rich, row, text};
 
 use super::V;
 use super::widgets::{CHECK, label};
 use crate::app::App;
-use crate::md::{self, Block, Tok};
+use crate::md::{self, Align, Block, Inline};
 use crate::theme::{self, Pal};
 
 struct Look {
@@ -22,7 +25,10 @@ struct Look {
 
 impl Look {
     fn body(&self) -> TextStyle {
-        TextStyle::new(self.size, 400.0).family(self.family).lh(self.size * self.lh)
+        self.weight(400.0)
+    }
+    fn weight(&self, w: f32) -> TextStyle {
+        TextStyle::new(self.size, w).family(self.family).lh(self.size * self.lh)
     }
     /// Baseline below the top of a line box of this body text.
     fn baseline(&self, size: f32, lh: f32, asc: f32, desc: f32) -> f32 {
@@ -39,95 +45,75 @@ struct Rich {
     links: Vec<(std::ops::Range<usize>, String)>,
 }
 
+/// The style that inline markup around a run gives it.
 #[derive(Clone, Copy, Default)]
 struct Ctx {
     bold: bool,
     italic: bool,
+    color: Option<Color>,
+    underline: Option<Color>,
 }
 
 impl Rich {
-    fn push(&mut self, s: &str, cx: Ctx, color: Option<Color>) {
+    fn push(&mut self, s: &str, cx: Ctx) {
         let a = self.text.len();
         self.text.push_str(s);
         let b = self.text.len();
-        if a < b && (cx.bold || cx.italic || color.is_some()) {
-            self.spans.push(Span { weight: cx.bold.then_some(600.0), italic: cx.italic, color, ..Span::new(a, b) });
+        if a < b && (cx.bold || cx.italic || cx.color.is_some() || cx.underline.is_some()) {
+            self.spans.push(Span { weight: cx.bold.then_some(600.0), italic: cx.italic, color: cx.color, underline: cx.underline, ..Span::new(a, b) });
         }
     }
 
     /// The design's `inl()`: inline Markdown to styled runs.
-    fn inline(&mut self, s: &str, cx: Ctx, p: &Pal, look: &Look, names: &md::Names, base_color: Option<Color>) {
-        let mut last = 0;
-        for (t, r) in md::inline_tokens(s) {
-            // `![alt](src)` inside a sentence shows its alt text. Lines of images are blocks.
-            let image = t == Tok::Link && r.start > last && s[..r.start].ends_with('!');
-            let pre_end = if image { r.start - 1 } else { r.start };
-            if pre_end > last {
-                self.push(&s[last..pre_end], cx, base_color);
-            }
-            let tok = &s[r.clone()];
-            match t {
-                Tok::Code => {
+    fn inlines(&mut self, v: &[Inline], cx: Ctx, p: &Pal, look: &Look, names: &md::Names) {
+        for i in v {
+            match i {
+                Inline::Text(t) => self.push(t, cx),
+                Inline::Break => self.push("\n", cx),
+                Inline::Code(t) => {
                     // `padding: .12em .38em` at .8em: the background grows by the vertical
                     // padding, and spaces sized to the rest of the horizontal padding take room.
                     let size = look.size * 0.8;
-                    self.chip(&tok[1..tok.len() - 1], size, look.mono_w, 0.12 * size, 0.38 * size, base_color, p.code);
+                    self.chip(t, size, look.mono_w, 0.12 * size, 0.38 * size, cx.color, p.code);
                 }
-                Tok::Wiki => {
-                    let inner = &tok[2..tok.len() - 2];
-                    let mut parts = inner.splitn(2, '|');
-                    let target = parts.next().unwrap_or("").replace('\u{a0}', " ");
-                    let alias = parts.next();
-                    let shown = alias.unwrap_or(&target).trim().to_string();
-                    let ok = names.resolve(&target).is_some();
+                Inline::Strong(k) => self.inlines(k, Ctx { bold: true, ..cx }, p, look, names),
+                Inline::Emph(k) => self.inlines(k, Ctx { italic: true, ..cx }, p, look, names),
+                Inline::Strike(k) => {
                     let a = self.text.len();
-                    self.text.push_str(&shown);
-                    let b = self.text.len();
-                    self.spans.push(Span {
-                        weight: cx.bold.then_some(600.0),
-                        italic: cx.italic,
-                        color: Some(if ok { p.acc } else { p.mute }),
-                        underline: Some(if ok { p.link_line } else { p.mark }),
-                        ..Span::new(a, b)
-                    });
-                    self.links.push((a..b, format!("wiki:{}", target.trim())));
-                }
-                Tok::Bold => self.inline(&tok[2..tok.len() - 2], Ctx { bold: true, ..cx }, p, look, names, base_color),
-                Tok::Italic => self.inline(&tok[1..tok.len() - 1], Ctx { italic: true, ..cx }, p, look, names, base_color),
-                Tok::Strike => {
-                    let a = self.text.len();
-                    self.push(&tok[2..tok.len() - 2], cx, Some(p.mute));
+                    self.inlines(k, Ctx { color: Some(p.mute), ..cx }, p, look, names);
                     let b = self.text.len();
                     self.strikes.push((a, b, Some(p.mute)));
                 }
-                Tok::Link if image => {
-                    let j = tok.find("](").unwrap_or(tok.len());
+                Inline::Link { url, kids } => {
                     let a = self.text.len();
-                    self.text.push_str(if j > 1 { &tok[1..j] } else { "image" });
+                    let lc = Ctx { color: Some(p.acc), underline: Some(p.acc), ..cx };
+                    if kids.is_empty() {
+                        self.push(url, lc);
+                    } else {
+                        self.inlines(kids, lc, p, look, names);
+                    }
                     let b = self.text.len();
-                    self.spans.push(Span { color: Some(p.mute), italic: true, ..Span::new(a, b) });
-                }
-                Tok::Link => {
-                    let j = tok.find("](").unwrap_or(tok.len());
-                    let url = tok[j + 2..tok.len() - 1].to_string();
-                    let a = self.text.len();
-                    self.text.push_str(&tok[1..j]);
-                    let b = self.text.len();
-                    self.spans.push(Span { color: Some(p.acc), underline: Some(p.acc), weight: cx.bold.then_some(600.0), italic: cx.italic, ..Span::new(a, b) });
                     self.links.push((a..b, format!("url:{url}")));
                 }
-                Tok::Tag => {
+                Inline::Wiki { target, shown } => {
+                    let ok = names.resolve(target).is_some();
+                    let a = self.text.len();
+                    self.push(shown, Ctx { color: Some(if ok { p.acc } else { p.mute }), underline: Some(if ok { p.link_line } else { p.mark }), ..cx });
+                    let b = self.text.len();
+                    self.links.push((a..b, format!("wiki:{target}")));
+                }
+                // An image inside a sentence shows its alt text. Lines of images are blocks.
+                Inline::Image(img) => {
+                    self.push(if img.alt.is_empty() { "image" } else { &img.alt }, Ctx { italic: true, color: Some(p.mute), ..Ctx::default() });
+                }
+                Inline::Tag(t) => {
                     let size = look.size * 0.72;
                     let a = self.text.len();
-                    self.chip(tok, size, look.mono_w, 0.18 * size, 0.45 * size, Some(p.acc), p.soft);
+                    self.chip(&format!("#{t}"), size, look.mono_w, 0.18 * size, 0.45 * size, Some(p.acc), p.soft);
                     let b = self.text.len();
-                    self.links.push((a..b, format!("tag:{}", &tok[1..])));
+                    self.links.push((a..b, format!("tag:{t}")));
                 }
             }
-            last = r.end;
-        }
-        if last < s.len() {
-            self.push(&s[last..], cx, base_color);
         }
     }
 
@@ -175,8 +161,39 @@ fn on_link(s: &mut App, id: &str, tx: &mut Tx) {
     }
 }
 
+/// What draws one note.
+struct Pv<'a> {
+    v: V<'a>,
+    look: Look,
+    names: &'a md::Names,
+    used: HashSet<usize>,
+    n: usize,
+}
+
+impl Pv<'_> {
+    /// `pv-{line}` for the outermost block on a line, which the outline and search scroll to;
+    /// a key of its own for a block nested on the same line.
+    fn key(&mut self, line: usize) -> String {
+        if self.used.insert(line) {
+            format!("pv-{line}")
+        } else {
+            self.n += 1;
+            format!("b-{}", self.n)
+        }
+    }
+}
+
+/// Where a block sits.
+#[derive(Clone, Copy, Default)]
+struct Within {
+    quote: bool,
+    /// In an item of a tight list: paragraphs take no margins.
+    tight: bool,
+    /// In a done task.
+    done: bool,
+}
+
 pub fn preview(v: V) -> El {
-    let p = v.p;
     let s = v.s;
     let set = s.settings();
     let serif = set.preview_font == "serif";
@@ -191,91 +208,92 @@ pub fn preview(v: V) -> El {
         asc: if serif { 0.735 } else { 0.97 },
         desc: if serif { 0.265 } else { 0.25 },
     };
-    let em = size;
-    let names = &s.names;
-    let doc = s.active_text();
-    let blocks = md::blocks(doc);
+    let blocks = md::tree(s.active_text());
+    let mut pv = Pv { v, look, names: &s.names, used: HashSet::new(), n: 0 };
     // Collapsed top margin left after the breadcrumb's 30 px bottom margin.
     let mut prev_mb: f32 = if v.focus() { 0.0 } else { 30.0 };
     let mut first = true;
     let mut out = col().key("preview").w_full();
-    for b in blocks {
-        let (mt, mb, el_) = block(v, &look, names, b);
+    for b in blocks.iter() {
+        let (mt, mb, el_) = block(&mut pv, b, Within::default());
         let gap = if first { (mt - prev_mb).max(0.0) } else { mt.max(prev_mb) };
         first = false;
         out = out.child(el_.mt(gap));
         prev_mb = mb;
     }
-    let _ = (em, p);
     out
 }
 
+/// Blocks in a column, with their margins collapsed as CSS collapses them. The first block's
+/// top margin and the last one's bottom margin fall inside the box that holds them.
+fn stack(pv: &mut Pv, blocks: &[Block], w: Within) -> El {
+    let mut c = col().w_full();
+    let mut prev: Option<f32> = None;
+    for b in blocks {
+        let (mt, mb, e) = block(pv, b, w);
+        c = c.child(e.mt(prev.map_or(0.0, |p| mt.max(p))));
+        prev = Some(mb);
+    }
+    c
+}
+
 /// One block with its CSS top and bottom margins (collapsed by the caller).
-fn block(v: V, look: &Look, names: &md::Names, b: Block) -> (f32, f32, El) {
+fn block(pv: &mut Pv, b: &Block, w: Within) -> (f32, f32, El) {
+    let v = pv.v;
     let p = v.p;
-    let em = look.size;
-    let body = look.body();
+    let em = pv.look.size;
+    let body = pv.look.body();
     match b {
+        Block::Props { line, props } => {
+            let key = pv.key(*line);
+            (0.0, em * 1.6, properties(pv, key, props))
+        }
         Block::Image { line, images } => {
-            let mut c = col().key(format!("pv-{line}")).w_full().gap(em * 0.6);
+            let mut c = col().key(pv.key(*line)).w_full().gap(em * 0.6);
             for (i, img) in images.iter().enumerate() {
-                c = c.child(picture(v, img, look).key(format!("img-{i}")));
+                c = c.child(picture(v, img, &pv.look).key(format!("img-{i}")));
             }
             (em * 0.4, em * 0.95, c)
         }
         Block::Pre { line, text: t } => {
-            let style = TextStyle::new((em * 0.74).round(), 400.0).family(look.mono).lh((em * 0.74).round() * 1.65);
+            let style = TextStyle::new((em * 0.74).round(), 400.0).family(pv.look.mono).lh((em * 0.74).round() * 1.65);
             let e = el()
-                .key(format!("pv-{line}"))
+                .key(pv.key(*line))
                 .w_full()
                 .radius(8.0)
                 .fill(p.code)
                 .scroll_x()
-                .child(el().py(14.0).px(18.0).child(text(if t.is_empty() { " ".into() } else { t }).font(style).color(p.ink2)));
+                .child(el().py(14.0).px(18.0).child(text(if t.is_empty() { " ".to_string() } else { t.clone() }).font(style).color(p.ink2)));
             (em * 1.2, em * 1.3, e)
         }
-        Block::Heading { line, level, index, text: t } => {
-            let (k, lh, w, mt, mb, track) = match level {
-                1 => (1.72, 1.15, if look.serif { 500.0 } else { 600.0 }, 0.0, 0.7, -0.012),
+        Block::Heading { line, level, inlines } => {
+            // Levels 4 to 6 look like 3.
+            let (k, lh, wt, mt, mb, track) = match level {
+                1 => (1.72, 1.15, if pv.look.serif { 500.0 } else { 600.0 }, 0.0, 0.7, -0.012),
                 2 => (1.3, 1.25, 600.0, 1.7, 0.55, 0.0),
                 _ => (1.08, 1.3, 600.0, 1.5, 0.45, 0.0),
             };
             let size = em * k;
-            let style = TextStyle::new(size, w).family(look.family).lh(size * lh).tracking(size * track);
+            let style = TextStyle::new(size, wt).family(pv.look.family).lh(size * lh).tracking(size * track);
             let mut r = Rich::default();
-            r.inline(&t, Ctx::default(), p, look, names, None);
-            let e = r.el(style, p.ink).key(format!("pv-{line}")).w_full().role("heading").level(level as u32).label(t.clone());
-            let _ = index;
+            r.inlines(inlines, Ctx::default(), p, &pv.look, pv.names);
+            let e = r.el(style, p.ink).key(pv.key(*line)).w_full().role("heading").level(*level as u32).label(md::plain(inlines).trim().to_string());
             (size * mt, size * mb, e)
         }
-        Block::Rule => (em * 2.2, em * 2.2, el().h(1.0).w_full().fill(p.line)),
-        Block::Quote { line, text: t } => {
-            let mut r = Rich::default();
-            r.inline(&md::pretty(&t), Ctx { italic: true, bold: false }, p, look, names, None);
-            let e = el()
-                .key(format!("pv-{line}"))
-                .w_full()
-                .pt(em * 0.1)
-                .pb(em * 0.1)
-                .pl(em * 1.1 + 2.0)
-                .border_sides([0.0, 0.0, 0.0, 2.0], p.mark)
-                .child(r.el(body.italic(), p.ink2).w_full());
+        Block::Rule { line } => (em * 2.2, em * 2.2, el().key(pv.key(*line)).h(1.0).w_full().fill(p.line)),
+        Block::Quote { line, blocks } => {
+            let key = pv.key(*line);
+            let inner = stack(pv, blocks, Within { quote: true, ..w });
+            let e = el().key(key).w_full().pt(em * 0.1).pb(em * 0.1).pl(em * 1.1 + 2.0).border_sides([0.0, 0.0, 0.0, 2.0], p.mark).child(inner);
             (em * 1.3, em * 1.3, e)
         }
-        Block::List { line, items } => {
-            let mut c = col().key(format!("pv-{line}")).w_full().role("list");
-            let gap = em * 0.25;
-            let text_base = look.baseline(em, em * look.lh, look.asc, look.desc);
-            for (i, it) in items.into_iter().enumerate() {
-                let mut r = Rich::default();
-                let base_color = if it.done { Some(p.mute) } else { None };
-                r.inline(&md::pretty(&it.text), Ctx::default(), p, look, names, base_color);
-                let n = r.text.len();
-                let mut te = r.el(body, p.ink).grow(1.0).shrink().min_w(0.0);
-                if it.done {
-                    te = te.strike(0, n, Some(p.mark));
-                }
-                let marker = if it.task {
+        Block::List { line, ordered, start, delim, tight, items } => {
+            let mut c = col().key(pv.key(*line)).w_full().role("list");
+            let gap = if *tight { em * 0.25 } else { em * 0.95 };
+            let text_base = pv.look.baseline(em, em * pv.look.lh, pv.look.asc, pv.look.desc);
+            for (i, it) in items.iter().enumerate() {
+                let done = it.task == Some(true);
+                let marker = if let Some(done) = it.task {
                     let sz = em * 0.85;
                     let top = text_base - sz + em * 0.1;
                     let line_no = it.line;
@@ -285,42 +303,136 @@ fn block(v: V, look: &Look, names: &md::Names, b: Block) -> (f32, f32, El) {
                         .mt(top)
                         .center()
                         .radius(3.0)
-                        .border(1.5, if it.done { p.acc } else { p.mark })
+                        .border(1.5, if done { p.acc } else { p.mark })
                         .role("checkbox")
-                        .checked(it.done)
+                        .checked(done)
                         .cursor(rune::Cursor::Pointer)
                         .on_press(move |s: &mut App| s.toggle_task(line_no));
-                    if it.done {
+                    if done {
                         bx = bx.fill(p.acc).child(icon(&CHECK, 9.0).color(p.on_acc));
                     }
                     bx
-                } else if it.marker.as_bytes()[0].is_ascii_digit() {
+                } else if *ordered {
                     let ns = em * 0.78;
-                    let nlh = ns * look.lh;
-                    let shift = text_base - look.baseline(ns, nlh, 1.025, 0.275);
-                    el().key("num").min_w(ns * 1.3).mt(shift).child(text(it.marker.clone()).font(TextStyle::new(ns, 400.0).family(look.mono).lh(nlh)).color(p.mute))
+                    let nlh = ns * pv.look.lh;
+                    let shift = text_base - pv.look.baseline(ns, nlh, 1.025, 0.275);
+                    let n = format!("{}{delim}", start + i);
+                    el().key("num").min_w(ns * 1.3).mt(shift).child(text(n).font(TextStyle::new(ns, 400.0).family(pv.look.mono).lh(nlh)).color(p.mute))
                 } else {
                     row().key("bullet").w(em).justify_center().child(text("•").font(body).color(p.acc))
                 };
+                let inner = stack(pv, &it.blocks, Within { tight: *tight, done, ..w });
                 let li = row()
                     .key(format!("li-{}", it.line))
                     .w_full()
                     .gap(em * 0.65)
-                    .ml((it.indent / 2) as f32 * 1.5 * em)
                     .mt(if i == 0 { 0.0 } else { gap })
                     .child(marker)
-                    .child(te);
+                    .child(inner.grow(1.0).shrink().min_w(0.0));
                 c = c.child(li);
             }
-            (gap, em, c)
+            (em * 0.25, em, c)
         }
-        Block::Para { line, text: t } if is_tag_line(&t) => (0.0, em * 0.95, tag_line(v, look, line, &t)),
-        Block::Para { line, text: t } => {
+        Block::Table { line, align, rows } => {
+            let key = pv.key(*line);
+            (0.0, em * 0.95, table(pv, key, align, rows))
+        }
+        Block::Para { line, inlines } => {
+            let (mt, mb) = if w.tight { (0.0, 0.0) } else { (0.0, em * 0.95) };
+            if let Some(tags) = tag_words(inlines) {
+                let key = pv.key(*line);
+                return (mt, mb, tag_line(v, &pv.look, key, tags));
+            }
             let mut r = Rich::default();
-            r.inline(&md::pretty(&t), Ctx::default(), p, look, names, None);
-            (0.0, em * 0.95, r.el(body, p.ink).key(format!("pv-{line}")).w_full())
+            let cx = Ctx { italic: w.quote, color: w.done.then_some(p.mute), ..Ctx::default() };
+            r.inlines(inlines, cx, p, &pv.look, pv.names);
+            if w.done {
+                r.strikes.push((0, r.text.len(), Some(p.mark)));
+            }
+            let (style, color) = if w.quote { (body.italic(), p.ink2) } else { (body, p.ink) };
+            (mt, mb, r.el(style, color).key(pv.key(*line)).w_full())
         }
     }
+}
+
+/// A table as a browser lays one out by default: each column as wide as its widest cell on one
+/// line when the page has room, and otherwise narrower, in proportion to how much its text can
+/// wrap, but never narrower than its longest word.
+fn table(pv: &mut Pv, key: String, align: &[Align], rows: &[Vec<Vec<Inline>>]) -> El {
+    let p = pv.v.p;
+    let em = pv.look.size;
+    let (pad_x, pad_y) = (em * 0.75, em * 0.4);
+    let mut cells: Vec<Vec<(Rich, TextStyle)>> = Vec::new();
+    let mut min = vec![0.0f32; align.len()];
+    let mut max = vec![0.0f32; align.len()];
+    for (ri, r) in rows.iter().enumerate() {
+        let style = pv.look.weight(if ri == 0 { 600.0 } else { 400.0 });
+        let mut out = Vec::new();
+        for (ci, c) in r.iter().enumerate() {
+            let mut rich = Rich::default();
+            rich.inlines(c, Ctx::default(), p, &pv.look, pv.names);
+            let (a, b) = rune::text::content_widths(&rich.text, &rich.spans, style);
+            // A cell's border and padding, and a point for rounding.
+            let edge = 2.0 * pad_x + 1.0;
+            min[ci] = min[ci].max(a.ceil() + edge);
+            max[ci] = max[ci].max(b.ceil() + edge);
+            out.push((rich, style));
+        }
+        cells.push(out);
+    }
+    let mut t = col().key(key).w_full().role("table");
+    for (ri, r) in cells.into_iter().enumerate() {
+        let mut tr = row().key(format!("r-{ri}")).w_full().items_stretch().role("row");
+        for (ci, (rich, style)) in r.into_iter().enumerate() {
+            let a = match align.get(ci) {
+                Some(Align::Center) => rune::Align::Center,
+                Some(Align::Right) => rune::Align::End,
+                _ => rune::Align::Start,
+            };
+            let mut cell = el()
+                .key(format!("c-{ci}"))
+                .grow(max[ci] - min[ci])
+                .min_w(min[ci])
+                .max_w(max[ci])
+                .px(pad_x)
+                .py(pad_y)
+                .border_sides([if ri == 0 { 1.0 } else { 0.0 }, 1.0, 1.0, if ci == 0 { 1.0 } else { 0.0 }], p.line)
+                .role("cell")
+                .child(rich.el(style, p.ink).w_full().align(a));
+            if ri == 0 {
+                cell = cell.fill(p.code);
+            }
+            tr = tr.child(cell);
+        }
+        t = t.child(tr);
+    }
+    t
+}
+
+/// Front matter as a small table of properties, as Obsidian shows it above a note.
+fn properties(pv: &mut Pv, key: String, props: &[(String, Vec<Inline>)]) -> El {
+    let p = pv.v.p;
+    let em = pv.look.size;
+    let size = (em * 0.8).round();
+    let style = theme::sans(size, 400.0);
+    let widest = props.iter().map(|(k, _)| rune::text::advance(k, style)).fold(0.0, f32::max);
+    let kw = widest.ceil().min(em * 10.0);
+    let mut c = col().key(key).w_full().gap(size * 0.35).pb(em * 0.9).border_sides([0.0, 0.0, 1.0, 0.0], p.line).role("table").label("Properties");
+    for (i, (k, vals)) in props.iter().enumerate() {
+        let mut r = Rich::default();
+        r.inlines(vals, Ctx::default(), p, &pv.look, pv.names);
+        c = c.child(
+            row()
+                .key(format!("p-{i}"))
+                .w_full()
+                .gap(em * 0.9)
+                .items_start()
+                .role("row")
+                .child(label(k.clone(), style, p.mute).wrap().w(kw))
+                .child(r.el(style, p.ink2).grow(1.0).shrink().min_w(0.0)),
+        );
+    }
+    c
 }
 
 /// One image at its own size, or narrower to fit the column. A box holds its place while it
@@ -362,14 +474,22 @@ fn picture(v: V, img: &md::Img, look: &Look) -> El {
     }
 }
 
-/// A paragraph of nothing but `#tags`.
-fn is_tag_line(t: &str) -> bool {
-    let words: Vec<&str> = t.split_whitespace().collect();
-    !words.is_empty() && words.iter().all(|w| md::inline_tokens(w).first().is_some_and(|(k, r)| *k == Tok::Tag && r.start == 0 && r.end == w.len()))
+/// The tags of a paragraph of nothing but `#tags`.
+fn tag_words(v: &[Inline]) -> Option<Vec<&str>> {
+    let mut tags = Vec::new();
+    for i in v {
+        match i {
+            Inline::Tag(t) => tags.push(t.as_str()),
+            Inline::Break => {}
+            Inline::Text(t) if t.trim().is_empty() => {}
+            _ => return None,
+        }
+    }
+    (!tags.is_empty()).then_some(tags)
 }
 
 /// Tags drawn as chips with CSS's exact padding, on the paragraph's baseline.
-fn tag_line(v: V, look: &Look, line: usize, t: &str) -> El {
+fn tag_line(v: V, look: &Look, key: String, tags: Vec<&str>) -> El {
     let p = v.p;
     let em = look.size;
     let lh = em * look.lh;
@@ -380,9 +500,10 @@ fn tag_line(v: V, look: &Look, line: usize, t: &str) -> El {
     let (ca, cd) = (theme::px(ma * size), theme::px(md_ * size));
     let pad_y = 0.18 * size;
     let space = em * 0.25;
-    let mut r = row().key(format!("pv-{line}")).w_full().h(lh).flex_wrap().gap(space).items_start();
-    for (i, w) in t.split_whitespace().enumerate() {
-        let tag = w[1..].to_string();
+    let mut r = row().key(key).w_full().min_h(lh).flex_wrap().gap(space).items_start();
+    for (i, t) in tags.into_iter().enumerate() {
+        let w = format!("#{t}");
+        let tag = t.to_string();
         r = r.child(
             row()
                 .key(format!("tag-{i}"))
@@ -393,12 +514,10 @@ fn tag_line(v: V, look: &Look, line: usize, t: &str) -> El {
                 .fill(p.soft)
                 .cursor(rune::Cursor::Pointer)
                 .role("link")
-                .label(w.to_string())
+                .label(w.clone())
                 .on_press(move |s: &mut App| s.search_tag(&tag))
                 .child(text(w).font(TextStyle::new(size, 400.0).family(look.mono).lh(ca + cd)).color(p.acc)),
         );
     }
     r
 }
-
-
