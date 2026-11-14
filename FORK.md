@@ -4,7 +4,7 @@ Kurt Lieber's fork of [bjarneo/quire](https://github.com/bjarneo/quire). Upstrea
 
 ## Branches and merges
 
-- `main` is upstream's latest release plus this fork's patch.
+- `main` is upstream's latest release plus this fork's patch and its own fixes.
 - The repository allows only merge commits. A squash of an upstream merge would drop upstream's history, and the next sync would bring the same commits again.
 - Commits use a GitHub noreply address.
 
@@ -15,6 +15,16 @@ Quire's updater (`desktop/src/update.rs`) asks this fork for releases, not upstr
 The sync re-applies the patch after every merge, with `sed` on every file under `desktop/src` that names `bjarneo/quire`. It stops with an error when no file there names this fork's download address, so a release that moves the updater ships nothing until the patch is updated.
 
 The Android app (`android/`) still asks upstream: this fork builds no APK.
+
+## The fork's own fixes
+
+Upstream takes no pull requests, so a fix made here stays here until upstream fixes the same thing. Each fix has an issue upstream that links its commit.
+
+- **The mouse wheel stops at the caret** in source mode, on Wayland with an input method such as fcitx5. The fix is in the vendored winit, `desktop/vendor/winit/src/platform_impl/linux/wayland/seat/text_input/mod.rs`. Upstream issue: [bjarneo/quire#2](https://github.com/bjarneo/quire/issues/2). Its tests are outside Quire's `cargo test`; run `cargo test --lib text_input` in `desktop/vendor/winit`.
+
+A fix ships with the next upstream release that the sync merges and builds. The fork makes no release of its own, because Quire's updater compares only the version's three numbers: a tag such as `v0.5.6-kl.1` is not newer than `v0.5.6`, so the Update button would never offer it.
+
+An upstream release that changes the same lines conflicts with the fix and stops the sync. Merge by hand, as below. Once upstream has fixed the same thing, take upstream's file and remove the fix's entry here.
 
 ## Upstream sync
 
@@ -47,7 +57,7 @@ GitHub turns off a scheduled workflow after 60 days without activity in a public
 
 A tag that starts with `v` runs `.github/workflows/release.yml`, which builds Linux, macOS and Windows archives and attaches them to the tag's release. A tag the sync pushes doesn't start a workflow, so the sync runs `release.yml` itself.
 
-Tags repeat upstream's version, with no suffix: Quire's updater reads the tag as its version, and the patch alone doesn't change what Quire does. v0.5.4 is the last release whose updater asks upstream.
+Tags repeat upstream's version, with no suffix: Quire's updater reads the tag as its version and compares only its three numbers. The fork's own fixes ship in the next upstream release, as above. v0.5.4 is the last release whose updater asks upstream.
 
 The Pages workflow is turned off in this fork: the website stays upstream's.
 
